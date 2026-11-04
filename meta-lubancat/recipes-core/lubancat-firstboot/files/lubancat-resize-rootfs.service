@@ -1,0 +1,17 @@
+[Unit]
+Description=LubanCat: resize root filesystem to fill its partition (first boot only)
+Documentation=file:///usr/sbin/lubancat-resize-rootfs
+ConditionPathExists=!/var/lib/lubancat/.rootfs-resized
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 失败不阻塞启动：下次开机 ConditionPathExists 仍成立，会重试
+ExecStart=/usr/sbin/lubancat-resize-rootfs
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

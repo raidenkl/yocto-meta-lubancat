@@ -1,0 +1,22 @@
+# 统一用 LF。这个仓库在 Windows 上编辑、在 Linux 上构建，
+# CRLF 会让远端脚本直接报 `$'\r': command not found`。
+* text=auto eol=lf
+
+*.sh        text eol=lf
+*.bb        text eol=lf
+*.bbappend  text eol=lf
+*.bbclass   text eol=lf
+*.inc       text eol=lf
+*.conf      text eol=lf
+*.yml       text eol=lf
+*.service   text eol=lf
+*.network   text eol=lf
+*.preset    text eol=lf
+board-table text eol=lf
+
+# 补丁必须逐字节保留，任何换行改写都会让它打不上
+*.patch     -text
+
+# 厂商工具（x86-64 静态 ELF），禁止换行/文本处理
+tools/rkpack/afptool      binary
+tools/rkpack/rkImageMaker binary

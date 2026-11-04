@@ -1,0 +1,123 @@
+# ============================================================================
+# local.conf 示例（build-conf/local.conf.sample）
+#
+# 用法：
+#   mkdir -p build/conf
+#   cp build-conf/local.conf.sample build/conf/local.conf
+#   然后按**你自己机器**的核数/内存改 BB_NUMBER_THREADS 与 PARALLEL_MAKE
+#
+# 下面的取值来自一台 64 核 / 62 GiB / 单盘 Ubuntu 22.04 的机器，
+# 推导过程见文件末尾「为什么是 16/8」。换机器不要照抄。
+#
+# 走 kas 时不需要这个文件：kas/lubancat.yml 的 local_conf_header 已经包含等价配置。
+# ============================================================================
+
+MACHINE = "lubancat-4-v1"
+DISTRO  = "poky"
+
+# ---- 目录：全部放本地 ext4 LV，三者分开目录便于单独清理 ----
+# 注意：TMPDIR 不能含 '..'，sanity checker 会直接报
+#   "Error, you have '..' in your TMPDIR directory path"
+# 所以三个目录都放在 build/ 下，不再用 ${TOPDIR}/.. 。
+DL_DIR     = "${TOPDIR}/downloads"
+SSTATE_DIR = "${TOPDIR}/sstate-cache"
+TMPDIR     = "${TOPDIR}/tmp"
+
+# ---- 并发（核心，见文末推导）----
+BB_NUMBER_THREADS = "16"
+PARALLEL_MAKE     = "-j 8"
+
+# 内存大户单独降并行：这些 recipe 单个 gcc/链接进程峰值能到 2~4 GiB，
+# 8 路并发叠起来就是 20~30 GiB，再乘以同时进行的其他任务会直接 OOM。
+# 它们不是构建时间的瓶颈，降下来几乎不损失总时长。
+PARALLEL_MAKE:pn-gcc                  = "-j 4"
+PARALLEL_MAKE:pn-gcc-cross-aarch64    = "-j 4"
+PARALLEL_MAKE:pn-gcc-runtime          = "-j 4"
+PARALLEL_MAKE:pn-libstdc++            = "-j 4"
+PARALLEL_MAKE:pn-llvm                 = "-j 4"
+PARALLEL_MAKE:pn-clang                = "-j 4"
+PARALLEL_MAKE:pn-nodejs               = "-j 4"
+PARALLEL_MAKE:pn-rust                 = "-j 4"
+PARALLEL_MAKE:pn-qtbase               = "-j 4"
+PARALLEL_MAKE:pn-webkitgtk            = "-j 4"
+
+# ---- 磁盘监控：只剩 404G，必须在写爆之前停下来 ----
+# 语法：action,path,<剩余空间>,<剩余 inode>；单位是 G/M 和 K（千），
+# 第二列写 "1G" 会被当成 10 亿个 inode 的阈值，直接永远报错。
+BB_DISKMON_DIRS ??= "\
+    STOPTASKS,${TMPDIR},2G,100K \
+    STOPTASKS,${DL_DIR},2G,100K \
+    STOPTASKS,${SSTATE_DIR},2G,100K \
+    HALT,${TMPDIR},500M,10K \
+    HALT,${DL_DIR},500M,10K \
+    HALT,${SSTATE_DIR},500M,10K"
+BB_DISKMON_WARNINTERVAL ?= "100M"
+
+# ---- 国内加速（实测：直连 GitHub 30 KB/s，gh-proxy 4.3 MB/s）----
+# 1) 普通 https 下载（systemd、各类 github tarball）走 PREMIRRORS 前缀重写。
+#    正则整体匹配后再拼到代理前缀后面，路径结构被完整保留。
+PREMIRRORS:prepend = "https://github.com/(.*)  https://gh-proxy.com/https://github.com/\1  \n"
+
+# 2) git 克隆（内核 / U-Boot / rkbin）走 git 的 insteadOf，见 scripts/setup-mirror.sh。
+#    也可以退一步用全局配置：git config --global url."https://gh-proxy.com/https://github.com/".insteadOf "https://github.com/"
+#    但那样连 push 也会被改写，所以默认放在脚本里按 shell 生效。
+
+# 3) 浅克隆：kernel / u-boot 仓库历史很大，只要 SRCREV 那一个提交
+BB_GIT_SHALLOW = "1"
+BB_GIT_SHALLOW_DEPTH = "1"
+BB_GENERATE_SHALLOW_TARBALLS = "1"
+
+# ---- 包与 init ----
+PACKAGE_CLASSES = "package_ipk"
+INIT_MANAGER    = "systemd"
+CONF_VERSION    = "2"
+
+# weston 的 poky/meta/recipes-graphics/wayland/required-distro-features.inc 里是：
+#   REQUIRED_DISTRO_FEATURES = "wayland opengl ${@oe.utils.conditional(
+#       'VIRTUAL-RUNTIME_init_manager', 'systemd', 'pam', '', d)}"
+# 即 systemd + weston 的组合强制要求 pam。poky 默认 DISTRO_FEATURES 不含 pam，
+# 于是 weston 被 skip，报 "Nothing RPROVIDES 'weston-xwayland'"。
+# 代价：DISTRO_FEATURES 变化会让所有 recipe 重新签名 = 全量重编一次。
+DISTRO_FEATURES:append = " pam"
+
+# ---- bring-up 阶段 ----
+EXTRA_IMAGE_FEATURES = "debug-tweaks tools-debug"
+# bitbake 不支持行尾注释（会报 unparsed line），注释一律单独成行
+INHERIT += "rm_work"
+LICENSE_FLAGS_ACCEPTED = "synaptics-killswitch"
+
+# ---- 可观测性 ----
+INHERIT += "buildhistory"
+BUILDHISTORY_COMMIT = "1"
+
+# ---- 可选：让 bitbake 按系统压力自动降速 ----
+# 若 bitbake 报 "PSI not supported"，把下面三行删掉即可（部分容器环境没有 /proc/pressure）。
+# BB_PRESSURE_MAX_CPU    = "50000"
+# BB_PRESSURE_MAX_MEMORY = "50000"
+# BB_PRESSURE_MAX_IO     = "50000"
+
+# ---- 可选：只跑 EVB 基线时临时改这一行 ----
+# MACHINE = "rockchip-rk3588-evb"
+
+# ============================================================================
+# 为什么是 BB=16 / PM=-j8 ？
+#
+# 1) 内存是瓶颈，不是 CPU。62 GiB 总量，扣掉系统与 page cache 约 8 GiB，
+#    可给编译用 ~50 GiB。按每个编译进程峰值 2 GiB 保守估，上限 ≈ 25 个并发进程。
+#    bitbake 的实际并发 ≈ BB_NUMBER_THREADS × PARALLEL_MAKE 的峰值裁剪，
+#    16 × 8 = 128 是标称上限，不是稳态；实测峰值编译进程数通常落在 30~45。
+# 2) CPU 64 核，标称 128 路并发意味着 2 倍超订，这在 bitbake 里是正合适的：
+#    任务里混着 fetch/unpack/package 这类不吃 CPU 的活。
+# 3) 重 recipe 用 pn- 覆盖降到 -j4，等于给内存上了保险。
+#
+# 调参策略（用数据说话，别拍脑袋）：
+#   - 观察内存：`while :; do free -g | awk 'NR==2{print $3}'; sleep 10; done`
+#     峰值稳定 < 45G 且没有 OOM → 可把 BB 提到 20~24（CPU 利用率会更好）
+#   - 观察 CPU：`vmstat 5` 的 us+sy 长期 < 60% → 说明 BB 偏小，加 BB_NUMBER_THREADS
+#   - 出现 `Out of memory: Killed process`（`dmesg -T | grep -i oom`）→ 先降 BB 到 12，
+#     再把 PARALLEL_MAKE 降到 -j 6，别急着降 pn- 覆盖
+#   - 磁盘：`df -h .` 低于 80G 时主动 `bitbake -c cleanall <image>` 或清 tmp
+#
+# 一次完整构建的磁盘预估（404G 可用）：
+#   downloads ~35G + sstate-cache ~45G + tmp（开 rm_work）~60~90G ≈ 140~170G
+# ============================================================================

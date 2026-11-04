@@ -1,0 +1,22 @@
+# LubanCat RK3588 / RK3588S 的 GPT 磁盘布局
+#
+# 与上游 meta-rockchip 的 wic/generic-gptdisk.wks.in 的差异（两处，都很关键）：
+#   1) 不含 trust 分区。LubanCat/u-boot 的 rk3588_defconfig 打开了
+#      CONFIG_ROCKCHIP_FIT_IMAGE_PACK=y，BL31 被包进 uboot.img，构建过程不产生
+#      trust.img；照抄上游会因 rawcopy 找不到文件而失败。
+#   2) rootfs 分区固定 GUID = 614e0000-0000-4000-8000-000000000000。
+#      Rockchip 内核 dtsi 的 /chosen bootargs 默认是
+#      root=PARTUUID=614e0000-0000-4000-8000-000000000000，且 U-Boot 的
+#      env_update() 会把 dtb 里的 root= 合并进命令行、覆盖我们传的 root=。
+#      固定 GUID 之后默认 bootargs 直接成立，不必再去改 dts 或 U-Boot 环境。
+#
+# 偏移语义：idblock 落 32KiB（sector 64），这是 BootROM 的硬约束；
+# uboot.img 用 --offset 2M。注意这与 Rockchip parameter.txt 的 0x4000(8MiB) 是
+# 两套不同布局，不可混用（详见手册第 10 章）。
+
+bootloader --ptable gpt
+
+part idblock --source rawcopy --sourceparams="file=idblock.img" --align 32 --no-table
+part uboot   --source rawcopy --sourceparams="file=uboot.img"   --offset 2M
+part boot    --source rawcopy --sourceparams="file=boot.img"    --align 4
+part rootfs  --source rootfs --fstype ext4 --label rootfs --align 8192 --uuid 614e0000-0000-4000-8000-000000000000

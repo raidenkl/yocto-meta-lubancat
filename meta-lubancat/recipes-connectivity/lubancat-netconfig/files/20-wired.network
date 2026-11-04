@@ -1,0 +1,10 @@
+# 有线网口默认 DHCP。静态 IP 时把 DHCP= 改成 no，并在下面补 Address/Gateway/DNS。
+[Match]
+Name=eth*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=no
+
+[DHCPv4]
+UseDomains=yes

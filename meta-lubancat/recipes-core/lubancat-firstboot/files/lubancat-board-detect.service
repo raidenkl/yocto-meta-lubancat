@@ -1,0 +1,18 @@
+[Unit]
+Description=LubanCat: detect board and switch rk-kernel.dtb / uEnv on first boot
+Documentation=file:///usr/sbin/lubancat-board-detect
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# 幂等判断在脚本内部（要看 boot 分区上的标记文件，unit 的 ConditionPathExists 在挂载前不可靠）
+ExecStart=/usr/sbin/lubancat-board-detect
+StandardOutput=journal
+StandardError=journal
+# 切完会 reboot，这里的超时只是兜底
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

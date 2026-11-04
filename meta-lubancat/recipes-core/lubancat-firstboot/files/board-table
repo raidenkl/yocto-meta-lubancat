@@ -1,0 +1,46 @@
+# LubanCat 板卡识别表：family  board_id  dtb  uEnv  board_name
+#
+# 来源：LubanCat_Linux_Generic_Full_SDK/debian12/overlay/etc/init.d/boot_init.sh 的 board_info()，
+# 机械转换而来。family 做了归并：rk3566/rk3568 -> rk356x，rk3588/rk3588s -> rk3588，
+# rk3528a -> rk3528；rk3128 不在本层范围，已剔除。
+# board_id 来自 SARADC 的 channel2(高两位) + channel3(低两位) 采样索引。
+rk3528 0001 rk3528-lubancat-q1.dtb uEnvLubanCatQ1.txt LubanCat-Q1
+rk3528 0002 rk3528-lubancat-q1io.dtb uEnvLubanCatQ1IO.txt LubanCat-Q1IO
+rk3528 0007 rk3528-lubancat-q1io-test.dtb uEnvLubanCatQ1IO-test.txt LubanCat-Q1IO-test
+rk3562 0000 rk3562-lubancat-1hs.dtb uEnvLubanCat1HS.txt LubanCat-1HS
+rk3562 0007 rk3562-lubancat-1hs-test.dtb uEnvLubanCat1HS-test.txt LubanCat-1HS-test
+rk3562 0100 rk3562-lubancat-1hs.dtb uEnvLubanCat1HS.txt LubanCat-1HSI
+rk3562 0107 rk3562-lubancat-1hs-test.dtb uEnvLubanCat1HS-test.txt LubanCat-1HS-test
+rk356x 0000 rk3566-lubancat-1.dtb uEnvLubanCat1.txt LubanCat-1
+rk356x 0001 rk3566-lubancat-1io.dtb uEnvLubanCat1IO.txt LubanCat-1IOF
+rk356x 0002 rk3566-lubancat-1io.dtb uEnvLubanCat1IO.txt LubanCat-1IOB
+rk356x 0007 rk3566-lubancat-1io-test.dtb uEnvLubanCat1IO-test.txt LubanCat-1IO-test
+rk356x 0100 rk3566-lubancat-1n.dtb uEnvLubanCat1N.txt LubanCat-1N
+rk356x 0102 rk3568-lubancat-2io.dtb uEnvLubanCat2IO.txt LubanCat-2IOBI
+rk356x 0200 rk3566-lubancat-0.dtb uEnvLubanCatZN.txt LubanCat-0N
+rk356x 0201 rk3566-lubancat-1h.dtb uEnvLubanCat1H.txt LubanCat-1H
+rk356x 0300 rk3566-lubancat-0.dtb uEnvLubanCatZW.txt LubanCat-0W
+rk356x 0304 rk3566-lubancat-cm4.dtb uEnvLubanCatCM4.txt LubanCat-CM4
+rk356x 0400 rk3568-lubancat-2.dtb uEnvLubanCat2.txt LubanCat-2
+rk356x 0402 rk3568-lubancat-2-v1.dtb uEnvLubanCat2-V1.txt LubanCat-2 v1
+rk356x 0403 rk3568-lubancat-2-v2.dtb uEnvLubanCat2-V2.txt LubanCat-2 v2
+rk356x 0404 rk3568-lubancat-2-v3.dtb uEnvLubanCat2-V3.txt LubanCat-2 v3
+rk356x 0500 rk3568-lubancat-2n.dtb uEnvLubanCat2N.txt LubanCat-2N
+rk356x 0501 rk3568-lubancat-2n-v2.dtb uEnvLubanCat2N-V2.txt LubanCat-2N v2
+rk356x 0502 rk3568-lubancat-2n-v3.dtb uEnvLubanCat2N-V3.txt LubanCat-2N v3
+rk356x 0600 rk3568-lubancat-2n.dtb uEnvLubanCat2N.txt LubanCat-2N
+rk356x 0601 rk3568-lubancat-2h.dtb uEnvLubanCat2H.txt LubanCat-2H
+rk356x 0700 rk3568-lubancat-2io.dtb uEnvLubanCat2IO.txt LubanCat-2IOF
+rk356x 0701 rk3568-lubancat-2io.dtb uEnvLubanCat2IO.txt LubanCat-2IOB
+rk3576 0000 rk3576-lubancat-3.dtb uEnvLubanCat3.txt LubanCat-3
+rk3576 0001 rk3576-lubancat-3io.dtb uEnvLubanCat3IO.txt LubanCat-3IO
+rk3576 0100 rk3576-lubancat-3-v2.dtb uEnvLubanCat3-V2.txt LubanCat-3 v2
+rk3588 0101 rk3588s-lubancat-4.dtb uEnvLubanCat4.txt LubanCat-4
+rk3588 0102 rk3588s-lubancat-4-v1.dtb uEnvLubanCat4-V1.txt LubanCat-4 v1
+rk3588 0201 rk3588s-lubancat-4io.dtb uEnvLubanCat4IO.txt LubanCat-4IOF
+rk3588 0301 rk3588s-lubancat-4io.dtb uEnvLubanCat4IO.txt LubanCat-4IOB
+rk3588 0401 rk3588-lubancat-5.dtb uEnvLubanCat5.txt LubanCat-5
+rk3588 0402 rk3588-lubancat-5-v2.dtb uEnvLubanCat5-V2.txt LubanCat-5 v2
+rk3588 0501 rk3588-lubancat-5io.dtb uEnvLubanCat5IO.txt LubanCat-5IOF
+rk3588 0601 rk3588-lubancat-5io.dtb uEnvLubanCat5IO.txt LubanCat-5IOB
+rk3588 0701 rk3588-lubancat-5ioi.dtb uEnvLubanCat5IO.txt LubanCat-5IOBI

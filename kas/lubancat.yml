@@ -1,0 +1,110 @@
+# kas 描述：一条命令复现构建
+#
+#   kas build kas/lubancat.yml          # 在仓库根执行
+#
+# 同时会自动加载同目录的 kas/lubancat.lock.yml（kas 的约定是 <name>.lock.<ext>），
+# 把 4 个上游层钉到具体 commit。
+#
+# 换机器：先用 KAS_MACHINE 覆盖，不要改本文件
+#   KAS_MACHINE=lubancat-rk3568 kas build kas/lubancat.yml
+#   KAS_MACHINE=lubancat-rk3588 kas build kas/lubancat.yml
+#
+# 只编某一档镜像：用 KAS_TARGET 覆盖 target 列表（空格分隔），并把 extboot-image 带上
+#   KAS_TARGET="lubancat-image-full extboot-image" kas build kas/lubancat.yml
+#
+# 注意：kas 的 work dir 默认是**执行 kas 时的当前目录**，所以务必在仓库根跑；
+# 4 个上游层会被 clone 到 ./poky、./meta-arm …（已在 .gitignore 里），
+# build/ 也建在仓库根。
+#
+# 复现失败时想升级上游：kas lock --update kas/lubancat.yml（生成新的 lock.yml 后提交）
+
+header:
+  version: 14
+  includes: []
+
+distro: poky
+machine: lubancat-4-v1
+
+# 镜像 + boot 分区。少一个都会让 make-updateimg.sh 在打包时找不到 boot-ext2.img。
+target:
+  - lubancat-image-minimal
+  - extboot-image
+
+repos:
+  poky:
+    url: https://git.yoctoproject.org/poky
+    branch: scarthgap
+    layers:
+      meta:
+      meta-poky:
+      meta-yocto-bsp:
+
+  meta-arm:
+    url: https://git.yoctoproject.org/meta-arm
+    branch: scarthgap
+    layers:
+      meta-arm:
+      meta-arm-toolchain:
+
+  meta-openembedded:
+    url: https://github.com/openembedded/meta-openembedded.git
+    branch: scarthgap
+    layers:
+      meta-oe:
+      meta-python:
+      meta-networking:
+      meta-filesystems:
+
+  meta-rockchip:
+    # 官方源：https://git.yoctoproject.org/meta-rockchip（GitHub 镜像拉得更快）
+    url: https://github.com/JeffyCN/meta-rockchip.git
+    branch: scarthgap
+
+  # 本层就在仓库里，path 相对 KAS_WORK_DIR（= 仓库根）
+  meta-lubancat:
+    path: meta-lubancat
+
+bblayers_conf_header:
+  standard: |
+    POKY_BBLAYERS_CONF_VERSION = "2"
+    BBPATH = "${TOPDIR}"
+    BBFILES ?= ""
+
+local_conf_header:
+  standard: |
+    CONF_VERSION = "2"
+    PACKAGE_CLASSES = "package_ipk"
+    INIT_MANAGER = "systemd"
+    # bring-up 阶段：root 空密码 + 串口/ssh 调试工具。发布前把 debug-tweaks 去掉。
+    EXTRA_IMAGE_FEATURES = "debug-tweaks tools-debug"
+    LICENSE_FLAGS_ACCEPTED = "synaptics-killswitch"
+    # systemd + weston 的组合强制要求 pam（见 poky 的 required-distro-features.inc）。
+    # 只有编 lubancat-image-full 时才真正需要；带上它会让全量 recipe 重新签名一次。
+    DISTRO_FEATURES:append = " pam"
+    INHERIT += "rm_work"
+  disk: |
+    # 三处目录都在 build/ 下；TMPDIR 不能含 '..'（sanity checker 直接报错）。
+    DL_DIR = "${TOPDIR}/downloads"
+    SSTATE_DIR = "${TOPDIR}/sstate-cache"
+    TMPDIR = "${TOPDIR}/tmp"
+  jobs: |
+    # 默认值按 8~16 核机器给的保守配置；64 核机器可提到 BB=16 / PM=-j8，
+    # 推导与调参方法见 build-conf/local.conf.sample 末尾。
+    BB_NUMBER_THREADS = "8"
+    PARALLEL_MAKE = "-j 8"
+    # 内存大户单独降并行
+    PARALLEL_MAKE:pn-gcc = "-j 4"
+    PARALLEL_MAKE:pn-gcc-cross-aarch64 = "-j 4"
+    PARALLEL_MAKE:pn-gcc-runtime = "-j 4"
+    PARALLEL_MAKE:pn-libstdc++ = "-j 4"
+    PARALLEL_MAKE:pn-llvm = "-j 4"
+    PARALLEL_MAKE:pn-nodejs = "-j 4"
+    PARALLEL_MAKE:pn-rust = "-j 4"
+    PARALLEL_MAKE:pn-qtbase = "-j 4"
+  diskmon: |
+    # 语法：action,path,剩余空间,剩余 inode。
+    # 第二列的单位是「千个 inode」，写成 1G 会被当成 10 亿个，永远报错。
+    BB_DISKMON_DIRS = "STOPTASKS,${TMPDIR},2G,100K STOPTASKS,${DL_DIR},2G,100K STOPTASKS,${SSTATE_DIR},2G,100K HALT,${TMPDIR},500M,10K HALT,${DL_DIR},500M,10K HALT,${SSTATE_DIR},500M,10K"
+  qa: |
+    # BSP 内核与本层补丁历史包袱较多，先关掉 patch 相关 QA，稳定后再打开
+    ERROR_QA:remove = "patch-status patch-fuzz"

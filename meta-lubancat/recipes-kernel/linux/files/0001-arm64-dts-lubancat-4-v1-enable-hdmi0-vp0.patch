@@ -1,0 +1,30 @@
+From: LubanCat BSP <dev@localhost>
+Subject: [PATCH] arm64: dts: rockchip: enable hdmi0 on lubancat-4-v1
+
+LubanCat-4 V1 的板级 dts 没有 include 厂商自带的显示路由片段
+rk3588s-lubancat-4-hdmi0-vp0.dtsi，于是：
+  - &hdmi0 保持 dtsi 默认的 status = "disabled"
+  - hdmi0_in_vp0/vp1/vp2 三个 endpoint 也全 disabled
+  - VOP2 找不到任何使能的输出 → "No crtc register, please check dts config"
+    → display-subsystem 绑定失败（-19）→ 没有任何显示 DRM 设备
+
+内核树里这个 dtsi 已经存在（含 enable-gpios = <&gpio4 RK_PB6>、
+route_hdmi0 -> vp0_out_hdmi0、hdptxphy_hdmi0、hdmi0_sound），
+只是板级 dts 没引用它。补一行 include 即可。
+
+Upstream-Status: Inappropriate [BSP-specific]
+
+---
+ arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4-v1.dts | 1 +
+ 1 file changed, 1 insertion(+)
+
+--- a/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4-v1.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3588s-lubancat-4-v1.dts
+@@ -7,6 +7,7 @@
+ /dts-v1/;
+ 
+ #include "rk3588s-lubancat-4.dts"
++#include "rk3588s-lubancat-4-hdmi0-vp0.dtsi"
+ 
+ / {
+ 	model = "Embedfire LubanCat-4 V1";

@@ -1,0 +1,21 @@
+# 自动生成的 lockfile —— 由 kas 在 checkout 阶段自动加载，不要手工改 commit 以外的内容。
+#
+# 重新生成（有意升级上游时才做）：
+#   kas lock --update kas/lubancat.yml
+#
+# 它只钉「层仓库」的 commit；BSP 三仓（kernel / u-boot / rkbin）由 bbappend 的
+# SRCREV 钉死，见 docs/VERSION-MATRIX.md。
+#
+# 本次取值来源：2026-11-04 在构建机上 `git -C <layer> rev-parse HEAD`（scarthgap 分支）
+header:
+  version: 14
+overrides:
+  repos:
+    poky:
+      commit: b6ae714a1d1bfae8384654a13da15996cac64712
+    meta-arm:
+      commit: 0a4b911d9fd63ab29c4532a907fae3282dbdcfe4
+    meta-openembedded:
+      commit: 2db6aece32c7f8ebf6015b468e1b4e21de072e3b
+    meta-rockchip:
+      commit: 6e9e6a8cb07cbdb4328ebd5ee1e4fed34e7a0fa8
