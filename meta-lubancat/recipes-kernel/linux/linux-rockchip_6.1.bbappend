@@ -10,12 +10,20 @@ FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
 
 # 用 = 整份替换，不要用 += 或者 :append —— 否则 require linux-yocto.inc 带进来的
 # 上游 git:// 源会一起拉，SRCREV 还会出现 SRCREV_<name> 未定义。
-SRC_URI = "git://github.com/LubanCat/kernel.git;protocol=https;branch=lbc-develop-6.1"
+#
+# 分支与 SRCREV 抽成弱赋值变量：meta-realtime（BBFILE_PRIORITY 15）只覆盖这两个变量，
+# 不重写 SRC_URI —— 整份重写会把 family.cfg 与下面两个补丁一起丢掉。
+# 覆盖方请用强赋值（=）；用 ?= 会变成"谁先解析谁赢"，跨层很脆。
+# 不对 RT 做任何事时，这两个默认值展开结果与改造前逐字节一致。
+LUBANCAT_KERNEL_BRANCH ?= "lbc-develop-6.1"
+LUBANCAT_KERNEL_SRCREV ?= "a0c672347152a0ea0713a043f1d1c4ec4323ff93"
+
+SRC_URI = "git://github.com/LubanCat/kernel.git;protocol=https;branch=${LUBANCAT_KERNEL_BRANCH}"
 
 # 钉到具体 commit。取法（不写死旧值，构建前现场取）：
 #   git ls-remote https://github.com/LubanCat/kernel.git refs/heads/lbc-develop-6.1
-# 下面这个值是 2026-11-02 当天 HEAD，仅供对照。
-SRCREV = "a0c672347152a0ea0713a043f1d1c4ec4323ff93"
+# 默认值是 2026-11-02 当天 HEAD，仅供对照。
+SRCREV = "${LUBANCAT_KERNEL_SRCREV}"
 
 LINUX_VERSION = "6.1.99"
 LINUX_VERSION_EXTENSION = "-lubancat"
