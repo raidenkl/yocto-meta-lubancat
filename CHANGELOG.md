@@ -10,6 +10,72 @@
 
 ---
 
+## v0.1.2
+
+### 新增 meta-realtime 层（PREEMPT_RT）
+
+- 新层 `meta-realtime`（`BBFILE_PRIORITY = 15`，`LAYERDEPENDS = "core lubancat"`），
+  把 `virtual/kernel` 切到 `lbc-develop-6.1-rt36`（Linux 6.1.99 + rt36）
+- 触发方式：`KAS_BUILD_DIR=$PWD/build-rt kas build kas/lubancat.yml:kas/realtime.yml`。
+  不叠加 overlay 时该层完全不参与构建
+- 支持 RK3588/3588S、RK3576、RK3566/3568、RK3562（这四族 RT defconfig 自带
+  `CONFIG_PREEMPT_RT=y`）；RK3528 的 defconfig 没有该选项，层里用 `bb.fatal` 拦住，
+  否则会编出一颗「看起来成功」的非 RT 内核
+
+### 内核
+
+- `linux-rockchip_6.1.bbappend` 把源参数化：新增弱赋值
+  `LUBANCAT_KERNEL_BRANCH` / `LUBANCAT_KERNEL_SRCREV`，`SRC_URI` 与 `SRCREV` 改为引用它们。
+  默认值与改造前逐字节一致，非 RT 构建行为不变；RT 层只覆盖这两个变量，不重写 `SRC_URI`
+  （重写会把 `family.cfg` 与 HDMI 补丁一起丢掉）
+- RT 层从 `SRC_URI` 摘除 `0002-wifi-out-of-tree-paths.patch`：该补丁涉及 11 个文件，
+  其中 `rtl8821cu` 的 3 个 `.mk` 在 RT 分支被改写成 `ccflags-y` 风格，上下文不匹配，
+  不摘除 `do_patch` 必失败
+- RT 配置片段 `lubancat-realtime.cfg`：
+  - `CONFIG_PREEMPT_RT=y`（choice 三选一；依赖的 `EXPERT` 由 defconfig 的 `EMBEDDED=y` 间接 select）
+  - `CONFIG_HZ_PERIODIC=n` + `CONFIG_NO_HZ_IDLE=y`：RT 分支 defconfig 里 `HZ_PERIODIC=y`
+    与 `NO_HZ=y` 并存，实际把 tickless 关掉了。两行都写，避免 `olddefconfig` 保留先出现的那一项
+  - 关 `PROVE_LOCKING` / `DEBUG_PREEMPT` / `DEBUG_ATOMIC_SLEEP` / `LOCK_STAT` 等延迟杀手，
+    显式开 `RCU_BOOST` / `RCU_NOCB_CPU`
+  - `CONFIG_WERROR=n`：`family.cfg` 末尾那句 `# CONFIG_WERROR is not set` 是死代码
+    （merge_config 当注释删掉），非 RT 构建里 WERROR 一直是 y
+  - vendor 无线全关（`RTL8189FS` / `RTL8821CU` / `RTL8851BE` / `RTL8852BE` / AIC8800 六项）。
+    AIC8800 是关键：RT defconfig 里是 `=m`，而 0002 改过它的 Makefile，不关必失败
+  - 主线 rtw88/rtw89 保留（RTL8188CE / RTL8822CE / RTL8851BE / RTL8852BE），
+    `WL_ROCKCHIP=y` 必须留着，否则 rtw89 会被 olddefconfig 静默清空
+
+### 构建
+
+- `kas/realtime.yml`：overlay 追加 `meta-realtime` 层，`DL_DIR` / `SSTATE_DIR` 指回主构建
+  （共用下载与 sstate），`TMPDIR` 由 `KAS_BUILD_DIR` 隔离
+- `.gitignore` 加 `/build-rt/`
+- RT 与非 RT 的 deploy 产物同名（`Image`、`boot-ext2.img`、`dtb/`），必须用独立
+  `KAS_BUILD_DIR`，否则会出现「烧了 RT 固件但 `uname -r` 没有 `-rt36`」
+- 打包需带 `DEPLOY=` 与 `WORK=` 指到 `build-rt`：只改 `DEPLOY` 会让脚本 `rm -rf` 掉
+  非 RT 的打包中间目录
+
+### 文档
+
+- 新增 `docs/realtime.md`：范围与前置、设计取舍（为什么参数化 bbappend、层优先级为什么是 15）、
+  构建与目录隔离、逐项配置解读、产物与打包、构建期与上板验收、延迟实测
+  （SDK 交叉编译 rt-tests / ftrace `wakeup_rt`）、与非 RT 的差异对照、10 条风险、回退与清理
+- 说明为什么镜像里没有 cyclictest：meta-openembedded scarthgap 全树没有 `rt-tests`
+
+### 实测（2026-11-05，`lubancat-4-v1`，`lubancat-image-net`）
+
+- `bitbake -c kernel_configme` + 完整构建 5435 个 task 全部通过（唯一 WARNING 是
+  `extboot-image` 用了主机 `mkimage`，既有问题）
+- `kernel.release` = `6.1.99-rt36-lubancat`；boot 分区 `Image` 的 banner 为
+  `#1 SMP PREEMPT_RT`；`rtw89_8852be.ko` 的 vermagic 为
+  `6.1.99-rt36-lubancat SMP preempt_rt`
+- `.config` 核对通过：`PREEMPT_RT=y` / `NO_HZ_IDLE=y`（`HZ_PERIODIC` 已清）/ `HZ_1000`
+  / `RT_GROUP_SCHED` 关 / `RCU_BOOST=y` / `WERROR` 关 / vendor 无线全关 / 主线 rtw88 与 rtw89 全 `=m`
+- **修正原先的预判**：版本串不是 `6.1.99-rk3588-rt36`。`localversion-rt` 的 `-rt36` 在前，
+  `CONFIG_LOCALVERSION` 在后，而后者被 poky 的 `kernel-yocto` 用 `LINUX_VERSION_EXTENSION`
+  覆写成 `-lubancat`（defconfig 的 `-rk3588` 被盖掉）。非 RT 同理是 `6.1.99-lubancat`
+
+---
+
 ## v0.1.1
 
 ### 内核

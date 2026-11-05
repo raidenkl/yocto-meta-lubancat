@@ -1,6 +1,6 @@
 # 版本矩阵
 
-对应 `CHANGELOG.md` 的 **v0.1.1**。更新日期：2026-11-05。
+对应 `CHANGELOG.md` 的 **v0.1.2**。更新日期：2026-11-05。
 
 ## 1. Yocto 系列
 
@@ -25,8 +25,13 @@
 | 组件 | 仓库 | 分支 | SRCREV | 版本 |
 |---|---|---|---|---|
 | kernel | `github.com/LubanCat/kernel` | `lbc-develop-6.1` | `a0c672347152a0ea0713a043f1d1c4ec4323ff93` | Linux 6.1.99 |
+| kernel（RT） | `github.com/LubanCat/kernel` | `lbc-develop-6.1-rt36` | `3d027a80ff4023e4ee6dba24db140a2eab2c1f28` | Linux 6.1.99-rt36 |
 | u-boot | `github.com/LubanCat/u-boot` | `main` | `a564b1d927aa6032520819536a5b8c450e8141c4` | 2017.09 (Rockchip fork) |
 | rkbin | `github.com/LubanCat/rkbin` | `master` | `74213af1e952c4683d2e35952507133b61394862` | DDR/ bl31 / bl32 预编译 |
+
+RT 行由 `meta-realtime` 层覆盖（`LUBANCAT_KERNEL_BRANCH` / `LUBANCAT_KERNEL_SRCREV`），
+只在叠加 `kas/realtime.yml` 时生效；启用 RT 后 `uname -r` 实测为 `6.1.99-rt36-lubancat`。
+RT 目前只在 RK3588 族编译验证，其余族未上板；RK3528 的 RT defconfig 没有 `PREEMPT_RT`，不支持。
 
 打包工具：`tools/rkpack/afptool` = Android Firmware Package Tool **v2.29**。
 

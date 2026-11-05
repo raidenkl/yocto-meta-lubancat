@@ -172,7 +172,7 @@ bitbake lubancat-image-minimal extboot-image
 
 ```
 yocto-meta-lubancat/          ← 仓库根，也是 kas 的 work dir
-├── kas/  build-conf/  scripts/  tools/rkpack/  docs/  meta-lubancat/
+├── kas/  build-conf/  scripts/  tools/rkpack/  docs/  meta-lubancat/  meta-realtime/
 ├── poky/  meta-arm/  meta-openembedded/  meta-rockchip/   ← 拉下来的层，已忽略
 └── build/                                                  ← 构建目录，已忽略
     ├── conf/local.conf
@@ -359,10 +359,11 @@ vi /mnt/uEnv/uEnv.txt
 
 ## 9. 版本、升级与许可
 
-- 当前版本 `v0.1.1`，见 [`CHANGELOG.md`](CHANGELOG.md)
+- 当前版本 `v0.1.2`，见 [`CHANGELOG.md`](CHANGELOG.md)
 - 层 commit、BSP SRCREV 与各 MACHINE 的验证情况：[`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md)
 - 为什么用 kas + lock、分支与 tag 规则：[`docs/repo-strategy.md`](docs/repo-strategy.md)
 - 完整实施手册（14 章 + 3 个附录）与常见报错速查表（§12.0）：[`docs/manual.md`](docs/manual.md)
+- PREEMPT_RT 内核（`meta-realtime` 层）的构建、验收与延迟实测：[`docs/realtime.md`](docs/realtime.md)
 
 升级到新的 Yocto 系列：
 
