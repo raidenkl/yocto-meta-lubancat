@@ -11,6 +11,9 @@ git clone https://github.com/<your-org>/yocto-meta-lubancat.git && cd yocto-meta
 sudo ./scripts/host-deps.sh
 kas build kas/lubancat.yml                # 拉 4 个上游层 + 编译 minimal 镜像 + boot 分区
 ./scripts/make-updateimg.sh               # 打成 rkfw update.img（工具已随仓库提供）
+
+# 换芯片、换镜像、换 PREEMPT_RT 内核：见 §5
+KAS_BUILD_DIR=$PWD/build-rt kas build kas/lubancat.yml:kas/realtime.yml
 ```
 
 | 项 | 值 |
@@ -30,13 +33,15 @@ SG200x（全志核）不在范围内。它走 fsbl + opensbi + fip.bin，需要�
 `meta-lubancat/` 是层本体：机器配置、kernel 与 U-Boot 的 bbappend、镜像 recipe、首启服务都在这里。
 `kas/lubancat.yml` 描述上游四个层和 local.conf 的内容，同目录的 `lubancat.lock.yml` 把它们的
 commit 钉死。`scripts/` 放主机依赖、拉层、打包和烧写脚本，`tools/rkpack/` 是两个 Rockchip 打包工具。
+`meta-realtime/` 是可选的 PREEMPT_RT 层，只在叠加 `kas/realtime.yml` 时参与构建，不叠加时对
+上面的流程零影响（见 [`docs/realtime.md`](docs/realtime.md)）。
 
 **三条必读警告**
 
 1. **串口是 1500000 8N1，内核里叫 `ttyFIQ0`**。  
    而且 `uEnv.txt` 的 `cmdline=` 会**覆盖** dts 里的 bootargs——写成 `console=ttyFIQ0`（漏波特率）  
    的表现是"串口全黑，但系统其实起来了、能 ping 通"。
-2. **磁盘 ≥ 300 GB，且必须是本地 ext4/xfs**。放在 NTFS / 9p / 网络盘上会慢 5~10 倍或直接报错。
+2. **磁盘 ≥ 300 GB，且必须是本地 ext4/xfs**。放在 NTFS / 9p / 网络盘上会慢 5到10 倍或直接报错。
 3. `update.img` 需要的 `afptool` / `rkImageMaker` **已随仓库提供**（`tools/rkpack/`）
 
 ## 2. 支持范围
@@ -70,9 +75,9 @@ commit 钉死。`scripts/` 放主机依赖、拉层、打包和烧写脚本，`t
 | 项 | 要求 | 说明 |
 |---|---|---|
 | 发行版 | Ubuntu 22.04 / 24.04、Debian 12 | scarthgap 支持范围 |
-| CPU | ≥ 8 核（推荐 16+） | 全量约 5000~9000 个任务 |
-| 内存 | ≥ 16 GiB（推荐 32 GiB+） | 单个 gcc 或链接进程峰值 2~4 GiB |
-| 磁盘 | ≥ 300 GB 空闲，本地 ext4/xfs | downloads 35~60G + sstate 45~80G + tmp 60~120G |
+| CPU | ≥ 8 核（推荐 16+） | 全量约 5000到9000 个任务 |
+| 内存 | ≥ 16 GiB（推荐 32 GiB+） | 单个 gcc 或链接进程峰值 2到4 GiB |
+| 磁盘 | ≥ 300 GB 空闲，本地 ext4/xfs | downloads 35到60G + sstate 45到80G + tmp 60到120G |
 | 文件系统 | 支持硬链接，不能用 NTFS / exFAT / 9p / 网络盘 | 否则报 `Invalid cross-device link` 或慢 10 倍 |
 | locale | `en_US.UTF-8` | 非 UTF-8 会在解析期抛 `UnicodeDecodeError` |
 | 文件句柄 | `ulimit -n 65536` | 默认 1024，并发一上来就 `Too many open files` |
@@ -203,36 +208,106 @@ ln -s /data/yocto-cache/poky poky
 | `kas: command not found` | 没装 kas，或 `~/.local/bin` 不在 PATH |
 | `path ... does not exist` | 不在仓库根执行 kas |
 
-## 5. 选择 MACHINE 与镜像
+## 5. 选芯片、镜像与内核
+
+三种选择都不需要改文件，命令行给环境变量即可：
+
+| 想换什么 | 怎么给 | 默认值 |
+|---|---|---|
+| 芯片 / 开发板 | `KAS_MACHINE=<machine>` | `lubancat-4-v1`（RK3588S） |
+| 镜像内容 | `KAS_TARGET="<image> extboot-image"` | `lubancat-image-minimal extboot-image` |
+| RT 内核 | 叠加 `kas/realtime.yml` | 非 RT |
+
+### 5.1 换芯片
+
+MACHINE 与芯片、板型的对应表在 §2。编 RK3568 的镜像：
 
 ```bash
-# 默认，kas/lubancat.yml 里写的是 lubancat-4-v1
-kas build kas/lubancat.yml
-
-# 换族，不改文件
 KAS_MACHINE=lubancat-rk3568 kas build kas/lubancat.yml
-
-# 换镜像档位，注意把 extboot-image 带上
-KAS_TARGET="lubancat-image-full extboot-image" kas build kas/lubancat.yml
 ```
 
-手动方式改 `build/conf/local.conf` 里的 `MACHINE`。
+族级 MACHINE 一份镜像就覆盖该族所有板型——boot 分区里放了全族 dtb / dtbo，首次启动时按板卡 ID
+自动切到本板那份（§2）。所以换芯片只是换一个 MACHINE，不需要为每块板单独编。
 
-在同一个 build 目录反复切 MACHINE，会让 kernel 这类与 MACHINE 相关的 recipe 重新签名，实测切一轮
-回来内核会整编一次。常态多板建议各用独立 build 目录，共享 `DL_DIR` 与 `SSTATE_DIR`。
+手动流程（§4 方式 B）改 `build/conf/local.conf` 里的 `MACHINE`。
 
-| 档 | recipe | 验收判据 | 额外内容 |
-|---|---|---|---|
-| L0 | `lubancat-image-minimal` | 串口出现 `login:`，root 可登录 | base 包组、dropbear、`debug-tweaks` |
-| L1 | `lubancat-image-net` | `ethtool eth0` 显示 `1000Mb/s Full`，能 ping 通网关 | L0 加 net 包组（ethtool、iproute2、tcpdump、tftp） |
-| L2 | `lubancat-image-full` | `systemctl status weston` 正常，`kmscube` 有画面 | L1 加 weston、libmali、librga、NPU 与 kmscube |
+> 一个 build 目录反复切 MACHINE，与 MACHINE 相关的 recipe 会重新签名，实测切一轮回来内核要整编一次。
+> 多族并行建议每族一个独立 build 目录，共享 `DL_DIR` 与 `SSTATE_DIR`。
 
-L2 需要 `DISTRO_FEATURES:append = " pam"`，systemd 与 weston 的组合强制要求它。`kas/lubancat.yml`
-和 `local.conf.sample` 都已带上，代价是首次启用时所有 recipe 重新签名一次。
+### 5.2 换镜像
 
-`debug-tweaks` 会给 root 空密码，只用于 bring-up，对外发布前记得去掉。
+三份 recipe，依赖依次递增，按要验证的东西选：
+
+| recipe | 内容 | 什么时候用 |
+|---|---|---|
+| `lubancat-image-minimal` | `core-image-minimal` + base 包组 + dropbear | 首次 bring-up，只看能不能起 |
+| `lubancat-image-net` | 加 tcpdump / tftp / curl、pciutils / iw / wpa-supplicant、四个无线模块与固件 | 验有线与无线 |
+| `lubancat-image-full` | `core-image-weston` + `rockchip-libmali` / `rockchip-librga` / `rockchip-npu` + kmscube | 验 GPU 与 Wayland |
+
+`extboot-image` 不是镜像，它生成 boot 分区那份 128 MiB 的 `boot-ext2.img`。**target 里必须带上它**，
+否则打包时找不到 boot 分区。
+
+```bash
+KAS_TARGET="lubancat-image-net extboot-image" kas build kas/lubancat.yml
+```
+
+三点提醒：
+
+- `lubancat-image-full` 需要 `DISTRO_FEATURES` 里有 `pam`（systemd + weston 强制要求），
+  `kas/lubancat.yml` 与 `local.conf.sample` 都已带上。
+- 默认配置的 `EXTRA_IMAGE_FEATURES` 含 `debug-tweaks`，编出来的任何镜像 root 都是空密码。上板调试方便，
+  对外发布前要改的是 `local.conf` 里的 `EXTRA_IMAGE_FEATURES`——改镜像 recipe 没有用。
+- 手册 `docs/manual.md` 把这三份称作 L0 / L1 / L2，本文件直接用 recipe 名。
+
+### 5.3 换 RT 内核
+
+`meta-realtime` 是可选的第二层，把内核从 `lbc-develop-6.1` 换成 `lbc-develop-6.1-rt36`（PREEMPT_RT），
+不新增镜像 recipe，镜像还是上面那三份。
+
+```bash
+KAS_BUILD_DIR=$PWD/build-rt kas build kas/lubancat.yml:kas/realtime.yml
+```
+
+`kas build a.yml:b.yml` 是"在 a 之上叠加 b"，不必改任何文件。产物落在
+`build-rt/tmp/deploy/images/<machine>/`，之后打包：
+
+```bash
+DEPLOY=$PWD/build-rt/tmp/deploy/images/lubancat-4-v1 \
+WORK=$PWD/build-rt/updateimg \
+IMAGE=lubancat-image-net ./scripts/make-updateimg.sh
+```
+
+四条要注意的：
+
+- **`KAS_BUILD_DIR` 不能省**。RT 与非 RT 的 `Image`、`boot-ext2.img`、`dtb/` 在 `deploy/images/<machine>/`
+  下同名，共用 build 目录会互相覆盖，表现是刷了 RT 镜像但 `uname -r` 里没有 `-rt36`。overlay 里
+  `DL_DIR` / `SSTATE_DIR` 指回主构建共用，只隔离 `TMPDIR`。
+- 打包时 `DEPLOY` 和 `WORK` 必须一起指到 `build-rt`——脚本会先 `rm -rf $WORK`，只改 `DEPLOY` 会删掉
+  非 RT 的中间目录。
+- RT 下 vendor 树的无线驱动（8189FS / 8821CU，SDIO / USB 模组）是**关掉**的，它们的补丁在 RT 分支打不上。
+  主线 `rtw88` / `rtw89` 不受影响，PCIe 卡（RTL8822CE、RTL8852BE 等）照常可用。
+- `lubancat-rk3528` 的 defconfig 没有 `PREEMPT_RT`，叠加 overlay 会直接报错退出。
+
+上板验收：
+
+```bash
+uname -r                  # 6.1.99-rt36-lubancat
+cat /sys/kernel/realtime  # 1
+```
+
+RT 的配置项、延迟实测、风险与回退见 [`docs/realtime.md`](docs/realtime.md)。
+
+### 5.4 想改默认值
+
+上面都是命令行覆盖，不动文件。要固化下来，得同时改两处：`build-conf/local.conf.sample`（手动流程）与
+`kas/lubancat.yml` 的 `local_conf_header`（kas 流程）。只改一处，两条路径会静默漂开。
+
+板级默认值（dtb、串口、u-boot defconfig 等）在 `meta-lubancat/conf/machine/` 下，逐项含义见
+[`docs/manual.md`](docs/manual.md) 第 6 章与附录 A 变量速查表。
 
 ## 6. 编译
+
+默认参数（RK3588S + minimal）下就一条命令，换芯片 / 换镜像 / 换 RT 内核见 §5。
 
 ```bash
 # kas
@@ -243,7 +318,7 @@ source poky/oe-init-build-env build
 bitbake lubancat-image-minimal extboot-image
 ```
 
-首次构建含下载，8 核大约 6~10 小时，16 线程 3~5 小时，64 核开 16 线程实测 1.5~2 小时；增量构建
+首次构建含下载，8 核大约 6到10 小时，16 线程 3到5 小时，64 核开 16 线程实测 1.5到2 小时；增量构建
 通常几分钟。
 
 产物在 `build/tmp/deploy/images/<machine>/`：
@@ -318,7 +393,7 @@ cd tools/rkpack && sha256sum -c SHA256SUMS
 | 3 | `DTB(Distro): rk-kernel.dtb` | 早期 dtb 取自 boot 分区，说明 ext2 布局生效 |
 | 4 | `Found U-Boot script /boot.scr` | distro_bootcmd 命中 |
 | 5 | `Starting kernel ...` 加内核日志 | |
-| 6 | `login:`，root 可登录 | L0 判据 |
+| 6 | `login:`，root 可登录 | 用 minimal 或 net 镜像时应能直接进 shell |
 | 7 | `/proc/cmdline` 含 `console=ttyFIQ0,1500000n8 root=/dev/mmcblk0p3 boot_part=2` | uEnv 生效 |
 
 起来之后再确认三件事：
