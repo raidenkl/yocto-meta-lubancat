@@ -1,0 +1,43 @@
+# PREEMPT_RT overlay
+#
+# 必须叠加在 kas/lubancat.yml **之后**（命令行冒号方式，后者覆盖前者）：
+#
+#   KAS_BUILD_DIR=$PWD/build-rt kas build kas/lubancat.yml:kas/realtime.yml
+#
+# 为什么不把 RT 直接写进 lubancat.yml：两套构建的 deploy 产物同名
+# （${DEPLOY_DIR_IMAGE}/{Image,boot-ext2.img,dtb/}），共用一个 TMPDIR 会互相覆盖。
+# 最典型的表现是"刷了 RT 固件，但 /sys/kernel/realtime 不存在"。
+# KAS_BUILD_DIR 直接把 TOPDIR 换掉，物理隔离；共享 DL/SSTATE 保证不重新下载。
+#
+# kas/lubancat.lock.yml 照常生效（lock 对命令行文件与被 include 的文件都生效）；
+# 本文件没有 lock 是正常的，它不引入新的 repo。
+
+header:
+  version: 14
+
+repos:
+  # layers 是 dict：追加一个层目录（key 相对 repo 根）。
+  # 不能写成列表，kas 会按 dict 递归合并，列表语义会覆盖掉 meta-lubancat。
+  meta-lubancat:
+    layers:
+      meta-realtime:
+
+local_conf_header:
+  realtime: |
+    # 复用主工作区的下载与 sstate。
+    # 可以共用：DL_DIR 按 URL+rev 内容寻址；SSTATE_DIR 的对象不可变、原子 rename，
+    #   多构建共享是 bitbake 本来就支持的（自带文件锁）。
+    # 不能共用：TMPDIR —— work/deploy/pkgdata 全按它组织，同名产物会互相覆盖。
+    # 注意：这里用了 '..'，只对 DL/SSTATE 安全；TMPDIR 含 '..' 会被 sanity checker 直接拒。
+    DL_DIR = "${TOPDIR}/../build/downloads"
+    SSTATE_DIR = "${TOPDIR}/../build/sstate-cache"
+
+    # 防呆：忘设 KAS_BUILD_DIR 时提示一次（只 warn 不 fatal，改动目录名的人不该被拦住）。
+    # 不提示的话，要等刷完机发现 uname -r 没有 -rt36 才回头查。
+    python __anonymous() {
+        import os
+        if os.path.basename(d.getVar("TOPDIR")) == "build":
+            bb.warn("meta-realtime: 当前 TOPDIR=<repo>/build，与非 RT 构建共用 deploy，"
+                    "两套 Image/boot-ext2.img 会互相覆盖。建议改用 "
+                    "KAS_BUILD_DIR=$PWD/build-rt kas build kas/lubancat.yml:kas/realtime.yml")
+    }

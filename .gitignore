@@ -2,6 +2,8 @@
 # 构建工作区（kas 在仓库根创建，全部由 .gitignore 排除）
 # ---------------------------------------------------------------------------
 /build/
+# PREEMPT_RT 用独立构建目录（KAS_BUILD_DIR=$PWD/build-rt），deploy 产物与非 RT 同名
+/build-rt/
 /tmp/
 /downloads/
 /sstate-cache/
