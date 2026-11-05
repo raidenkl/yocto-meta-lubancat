@@ -58,6 +58,16 @@ BB_DISKMON_WARNINTERVAL ?= "100M"
 #    正则整体匹配后再拼到代理前缀后面，路径结构被完整保留。
 PREMIRRORS:prepend = "https://github.com/(.*)  https://gh-proxy.com/https://github.com/\1  \n"
 
+# 1b) kernel.org 的固件包单独一条。cdn.kernel.org 实测 40 KB/s，而
+#     linux-firmware 的 tar.xz 有 365 MB —— 按原速要挂两个半小时；阿里云的
+#     linux-kernel 镜像实测 curl 15 MB/s、bitbake 的 wget 约 1 MB/s，五分钟内下完。
+#     只重写 /firmware/ 这一段，内核源码 tarball 不受影响。
+#     PREMIRRORS 的语义是"先试镜像、不通再回落原地址"，镜像挂了也不会把构建卡死；
+#     校验依旧按 SRC_URI[sha256sum] 走，镜像内容不一致会直接报 checksum 错误。
+KERNELORG_FW_SRC    = "https://cdn.kernel.org/pub/linux/kernel/firmware/"
+KERNELORG_FW_MIRROR = "https://mirrors.aliyun.com/linux-kernel/firmware/"
+PREMIRRORS:prepend = "${KERNELORG_FW_SRC}  ${KERNELORG_FW_MIRROR}  \n"
+
 # 2) git 克隆（内核 / U-Boot / rkbin）走 git 的 insteadOf，见 scripts/setup-mirror.sh。
 #    也可以退一步用全局配置：git config --global url."https://gh-proxy.com/https://github.com/".insteadOf "https://github.com/"
 #    但那样连 push 也会被改写，所以默认放在脚本里按 shell 生效。
