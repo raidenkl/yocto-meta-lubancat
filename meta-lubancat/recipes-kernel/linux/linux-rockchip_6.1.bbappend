@@ -37,6 +37,40 @@ SRC_URI += "file://lubancat-family.cfg"
 # 表现就是 HDMI 不亮、/sys/class/drm 里只有 rknpu 的 card0。
 SRC_URI += "file://0001-arm64-dts-lubancat-4-v1-enable-hdmi0-vp0.patch"
 
+# ---- vendor wifi 驱动：out-of-tree 构建下 $(src) 失效 ----
+# 这批驱动只在 S == B 的 in-tree 构建里验证过。Yocto 用 O=${B} 之后 $(src) 是
+# 相对源码树的路径、编译器 cwd 却是 build 树，于是踩两个坑：
+#
+#  1) -I$(src)/... 指向不存在的目录，第一个头文件就失败：
+#       rtl8821cu/core/rtw_cmd.c:17:10: fatal error: drv_types.h: No such file
+#  2) rtl8851be/rtl8852be 用 DRV_PATH=$(src) 去做
+#       include $(wildcard $(DRV_PATH)/platform/*.mk)
+#     通配为空 → platform/arm_rk.mk 根本没被读进来 → 少了
+#     -DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT → 代码退回 6.1 已经
+#     删掉的 cfg80211_send_rx_assoc()/cfg80211_send_disassoc()，还按老结构体
+#     访问 _ADAPTER_LINK.mlmeext，报出一串与 include 无关的错误：
+#       rtw_swcrypto.c:16:10: fatal error: aes.h: No such file or directory
+#       error: 'struct _ADAPTER_LINK' has no member named 'mlmeext'
+#
+# 补丁把 $(src) 解析成绝对路径（LUBANCAT_WIFI_SRC）供 -I 与 DRV_PATH 使用；
+# `make M=...` 的外部模块构建里 $(src) 本来就是绝对路径，表达式照样成立。
+# 相对路径的 `include $(src)/foo.mk` 不用改——kbuild 有 --include-dir=$(abs_srctree)。
+SRC_URI += "file://0002-wifi-out-of-tree-paths.patch"
+
+# ---- 无线网卡模块开机自动加载 ----
+# KERNEL_MODULE_AUTOLOAD 是**内核 recipe** 的变量，由 kernel-module-split 消费：
+# 它会在对应的 kernel-module-<mod> 包里生成 <modules-load.d>/<mod>.conf，
+# 所以只有该模块包被装进 rootfs 才生效（见 packagegroup-lubancat-net）。
+#
+# 名字必须是 .ko 的 basename，不是驱动目录名：
+#   8188CE → rtl8188ee    8822CE → rtw88_8822ce
+#   8851BE → rtw89_8851be  8852BE → rtw89_8852be
+#
+# PCIe 网卡靠 udev 的 modalias 本来也能自动加载，显式写出来是为了开机顺序确定、
+# journalctl 里能直接看出是谁加载的。插着哪张卡就只 bind 哪张，其余模块加载后
+# 找不到设备会自己退出，不会报错。
+KERNEL_MODULE_AUTOLOAD += "rtl8188ee rtw88_8822ce rtw89_8851be rtw89_8852be"
+
 # ---- Rockchip BSP 的 out-of-tree 构建坑：mali_csffw.bin ----
 # drivers/gpu/arm/bifrost/csf/mali_kbase_csf_firmware.c 里是
 #     asm(".incbin \"drivers/gpu/arm/bifrost/mali_csffw.bin\"");
