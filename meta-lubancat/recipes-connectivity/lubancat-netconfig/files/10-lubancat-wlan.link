@@ -1,0 +1,27 @@
+# meta-lubancat: 把无线网口钉回 wlan0
+#
+# 内核给 rtw88/rtw89 这类 cfg80211 驱动创建的网口本来就叫 wlan0，但 systemd-udevd
+# 会按 PCI 路径把它改名成 wlP4p65s0 这种"可预测名字"：
+#    rtw_8822ce 0004:41:00.0 wlP4p65s0: renamed from wlan0
+#
+# 调试阶段 wlan0 更好用（手册里的命令、网上找到的教程都是 wlan0），所以这里
+# 用 .link 文件把它钉住。
+#
+# 为什么用 Type=wlan 而不是 OriginalName=wlan0：
+#   OriginalName 匹配的是 udev 改名**之前**的内核名。设备已经被改过名之后这个键
+#   就匹配不上了（实测 udevadm test-builtin net_setup_link 下只有 99-default.link 生效，
+#   输出仍是 wlP4p65s0）。Type 匹配的是 uevent 里的 DEVTYPE=wlan，与当前名字、
+#   与具体驱动都无关，因此 PCIe / SDIO / USB 各种模组、vendor 驱动也一样命中：
+#     DEVTYPE=wlan  →  ID_NET_NAME=wlan0
+#
+# 只影响无线。有线网口（end0/end1）保持 systemd 的默认命名不变 —— 如果
+# 连有线也想回到 eth0，应该在内核命令行加 net.ifnames=0，而不是改这里。
+#
+# 插两张以上无线卡时，这张匹配规则会让它们抢同一个名字，那种场景请删掉本文件
+# （或改成按 Driver=/MACAddress= 精确匹配）。
+
+[Match]
+Type=wlan
+
+[Link]
+Name=wlan0

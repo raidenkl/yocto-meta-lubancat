@@ -1,4 +1,11 @@
 # 有线网口默认 DHCP。静态 IP 时把 DHCP= 改成 no，并在下面补 Address/Gateway/DNS。
+#
+# 注意 Match 写的是 Name=eth*：本板（LubanCat-4 v1）的有线网口实际叫 end1，由 poky 自带的
+# /usr/lib/systemd/network/80-wired.network 接管（它按 Type=ether 匹配，RouteMetric=10）。
+# 本条只对枚举成 eth0/eth1 的板子生效，留着是为了全系兼容。
+#
+# RouteMetric 显式写成 10，别让 networkd 用默认的 100：无线的 50-lubancat-wlan.network
+# 用的是 100，两者相同就会重演 "同 metric 只能有一个 nexthop" 的老问题。
 [Match]
 Name=eth*
 
@@ -8,3 +15,4 @@ IPv6AcceptRA=no
 
 [DHCPv4]
 UseDomains=yes
+RouteMetric=10

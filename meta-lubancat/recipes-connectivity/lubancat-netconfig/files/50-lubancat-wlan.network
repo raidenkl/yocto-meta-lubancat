@@ -1,0 +1,26 @@
+# meta-lubancat: 无线链路由 systemd-networkd 接管（和有线同一套）
+#
+# 为什么必须这么写：有线 end1 由 /usr/lib/systemd/network/80-wired.network 管理，
+# 它的 [DHCP] RouteMetric=10 会让内核里出现
+#     default via 192.168.103.254 dev end1 metric 10
+# 而 busybox udhcpc 的 /etc/udhcpc.d/50default 里 metric 是**写死 10** 的：
+#     ip route add default via $router metric 10 dev wlan0
+# 同一 (dst=default, metric) 只能有一个 nexthop，于是这句必然失败：
+#     RTNETLINK answers: File exists
+# 失败信息被 udhcpc 吞掉，结果就是 wlan0 有地址、却没有默认路由 —— 有线在时
+# 全部流量走有线（看起来"wifi 上不了网"），拔掉有线则一条默认路由都没有。
+#
+# 交给 networkd 之后，metric 由我们自己给（100 比有线的 10 大），两条默认路由
+# 共存且互不冲突；有线优先、无线兜底，拔网线时能立刻切到 wifi。
+#
+# 想反过来让 wifi 优先，把下面 RouteMetric 改成比 10 小的值（例如 5）即可。
+# 插多张无线卡时它们会共用这条规则，name 都是 wlan0，记得改 .link 按 MAC 区分。
+
+[Match]
+Type=wlan
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+RouteMetric=100
