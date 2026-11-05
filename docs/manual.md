@@ -251,6 +251,43 @@ export GIT_CONFIG_VALUE_0="https://github.com/"
 
 对应脚本：`scripts/setup-mirror.sh`，`source` 一下即可。
 
+#### 3.5.1 kernel.org 的固件包：cdn 直连是另一个数量级的坑
+
+`linux-firmware` 走的是 `${KERNELORG_MIRROR}`，即 `https://cdn.kernel.org/pub/...`，
+**不在 GitHub 那条规则覆盖范围内**。它的 tar.xz 有 365 MB，2026-11 实测：
+
+| 源 | 实测速度 | 365 MB 耗时 |
+|---|---|---|
+| `cdn.kernel.org`（配方默认） | 0.04 MB/s | 约 2.5 小时 |
+| `mirrors.aliyun.com/linux-kernel` | 15 MB/s（curl）/ 1.2 MB/s（bitbake 单线程 wget） | 25 s / 约 5 分钟 |
+| `mirrors.tuna.tsinghua.edu.cn/kernel` | 实测 0（首字节卡住） | — |
+
+加一条只针对 `/firmware/` 的前缀重写即可，别改 `KERNELORG_MIRROR` 本身（它会连带
+影响内核源码 tarball 的地址，而镜像站的目录层级和 kernel.org 不一定对齐）：
+
+```conf
+KERNELORG_FW_SRC    = "https://cdn.kernel.org/pub/linux/kernel/firmware/"
+KERNELORG_FW_MIRROR = "https://mirrors.aliyun.com/linux-kernel/firmware/"
+PREMIRRORS:prepend = "${KERNELORG_FW_SRC}  ${KERNELORG_FW_MIRROR}  \n"
+```
+
+三点说明：
+
+- `PREMIRRORS` 的语义是**先试镜像，不通再回落原地址**，所以镜像站挂了不会把构建卡死；
+- 校验仍按 `SRC_URI[sha256sum]` 走，镜像内容不对会直接报 checksum 错误（这也顺便证明了镜像与官方是同一份文件）；
+- 目录层级要在镜像站上确认一遍再写。清华的 `/kernel/` 直接对应 kernel.org 的 `pub/`（所以是 `/kernel/firmware/`），阿里云的对应关系是 `/linux-kernel/` 对 `pub/`，写错就是 404 —— 而 404 之后 bitbake 会静默回落原地址，表现为「配置了镜像但还是慢」，很容易误判。
+
+**改 `local.conf` 不会影响正在跑的构建**：bitbake 在启动时就把 `local.conf` 解析完了，
+运行中修改只对下一次启动生效。已经卡在慢速下载上的构建要么等，要么停掉重来 —— 停之前先把文件
+用 curl 直接拽进 `DL_DIR`（校验通过后 bitbake 会复用，并自己补 `.done`）：
+
+```bash
+cd ~/ljh/yocto/build/downloads
+curl -L -o linux-firmware-20240909.tar.xz \
+  https://mirrors.aliyun.com/linux-kernel/firmware/linux-firmware-20240909.tar.xz
+sha256sum linux-firmware-20240909.tar.xz   # 必须等于配方里的 943fbd19...9671
+```
+
 三个坑：
 
 1. **浅克隆要求 `SRCREV` 在分支顶端附近**。若某个 recipe 的 SRCREV 是历史提交，浅克隆会失败并回退全量（能编，只是慢）。
@@ -657,6 +694,298 @@ fdt addr ${fdt_addr_r}; fdt resize 8192; fdt apply ${dtbo_addr_r}
 booti ${kernel_addr_r} - ${fdt_addr_r}
 ```
 
+### 7.7 无线网卡：芯片 → 驱动 → 固件 → 自动加载
+
+LubanCat 的 M.2 位换卡很随意，同一套镜像要能认多颗芯片。先分清两条路线，混着调只会浪费时间：
+
+| 路线 | 适用 | 驱动在哪 | 固件在哪 |
+|---|---|---|---|
+| vendor 树 | SDIO / USB 模组（8189FS、8821CU） | `drivers/net/wireless/rockchip_wlan/` | meta-rockchip 的 `rkwifibt-firmware` |
+| 内核主线 | PCIe（M.2）模组 | `drivers/net/wireless/realtek/{rtlwifi,rtw88,rtw89}` | `linux-firmware` |
+
+现场这三颗**全是 PCIe**，所以走主线：
+
+| 芯片 | 驱动 | 内核配置（`lubancat-family.cfg`） | 模块名 | 固件文件 | 固件包 |
+|---|---|---|---|---|---|
+| RTL8188CE | `rtl8188ee`（rtlwifi） | `CONFIG_RTL8188EE=m` | `rtl8188ee` | `rtlwifi/rtl8188efw.bin` | `linux-firmware-rtl8188` |
+| RTL8822CE | `rtw88_8822ce` | `CONFIG_RTW88=m` + `CONFIG_RTW88_8822CE=m` | `rtw88_8822ce` | `rtw88/rtw8822c_fw.bin` | `linux-firmware-rtl8822` |
+| RTL8851BE | `rtw89_8851be` | `CONFIG_RTW89=m` + `CONFIG_RTW89_8851BE=m` | `rtw89_8851be` | `rtw89/rtw8851b_fw.bin` | `linux-firmware-rtw89` |
+| RTL8852BE | `rtw89_8852be` | `CONFIG_RTW89=m` + `CONFIG_RTW89_8852BE=m` | `rtw89_8852be` | `rtw89/rtw8852b_fw-1.bin` | `linux-firmware-rtw89` |
+
+**为什么不走 vendor 树**：vendor 树里根本没有 8188CE / 8822CE 的驱动；8851BE / 8852BE 虽然有，
+但和主线 `rtw89` 抢同一个 PCI ID（同一个 `10ec:b852` 两个模块都声明），只能二选一，而且它要的是
+Android 风格固件路径（`<CONFIG_FIRMWARE_PATH>/rtl8852b/RTL8852Bfw.bin`），linux-firmware 里没有那份。
+真要用 vendor 版（比如需要 AP 模式）就把 cfg 里 `CONFIG_RTL8851BE=m` / `CONFIG_RTL8852BE=m` 打开、
+同时关掉对应的 `RTW89_*`，再按上面的路径自己放固件。
+
+**`rtw88` / `rtw89` 是 menuconfig**，子驱动在 `if RTW88` / `if RTW89` 里面。只写
+`CONFIG_RTW89_8852BE=m` 不写 `CONFIG_RTW89=m`，olddefconfig 会把它清掉——这是最容易漏的一步。
+
+#### 7.7.1 固件包：别装主包，会拖进整棵固件树
+
+`linux-firmware` 的 recipe 末尾是
+
+```bitbake
+FILES:${PN} += "${nonarch_base_libdir}/firmware/*"
+```
+
+意思是**没被任何子包认领的固件全部落进主包** `linux-firmware`。主包是整棵树（几百 MB），
+所以要用子包。poky 里已经有 `-rtl8188`（`rtlwifi/rtl8188*.bin`）和 `-rtl8822`
+（`rtw88/rtw8822*.bin` + BT），但**没有 rtw89**，所以本层补了一个：
+
+```bitbake
+# meta-lubancat/recipes-kernel/linux-firmware/linux-firmware_%.bbappend
+PACKAGE_BEFORE_PN += "${PN}-rtw89"
+LICENSE:${PN}-rtw89 = "Firmware-rtlwifi_firmware"
+FILES:${PN}-rtw89 = "${nonarch_base_libdir}/firmware/rtw89/*.bin"
+RDEPENDS:${PN}-rtw89 += "${PN}-rtl-license"
+```
+
+用 `PACKAGE_BEFORE_PN` 而不是 `PACKAGES =+`：后者会把新包排在 `${PN}` **之后**，
+而文件分配是"按 PACKAGES 顺序先匹配先得"，排在主包后面等于抢不过兜底规则。
+
+#### 7.7.2 `KERNEL_MODULE_AUTOLOAD`：名字必须是 .ko 的 basename
+
+写在**内核 recipe** 里（不是镜像、不是 packagegroup），由 `kernel-module-split` 消费：
+它在对应的 `kernel-module-<mod>` 包里生成 `<modules-load.d>/<mod>.conf`，
+所以只有该模块包被装进 rootfs 才生效。
+
+```bitbake
+# meta-lubancat/recipes-kernel/linux/linux-rockchip_6.1.bbappend
+KERNEL_MODULE_AUTOLOAD += "rtl8188ee rtw88_8822ce rtw89_8851be rtw89_8852be"
+```
+
+PCIe 卡靠 udev 的 modalias 本来也能自动加载，显式写出来是为了开机顺序确定、
+`journalctl` 里能看出是谁加载的。插着哪张卡就只 bind 哪张，其余模块加载后找不到设备会自己退出。
+
+#### 7.7.3 模块包名：下划线会被换成短横线
+
+`kernel-module-split` 生成包名时会做一次规范化：取 `.ko` 的 basename，
+**把 `_` 全部替换成 `-`**，前面加 `kernel-module-`。所以
+
+```
+rtw88_8822ce.ko   →   kernel-module-rtw88-8822ce
+rtw89_8852be.ko   →   kernel-module-rtw89-8852be
+rtl8188ee.ko      →   kernel-module-rtl8188ee     （本来没下划线，不变）
+```
+
+包里的 `RPROVIDES` 也是短横线形式，所以写 `kernel-module-rtw88_8822ce` 解析不到任何包：
+
+```
+Solver encountered 1 problem(s):
+  - nothing provides kernel-module-rtw88_8822ce needed by packagegroup-lubancat-net-1.0-r0.all
+```
+
+**这个报错极易误判成"驱动没编出来"**——实际模块早已编好并拆分完成，只是名字对不上。
+想快速确认是哪种情况，直接列拆分结果：
+
+```bash
+ls tmp/work/*/linux-rockchip/*/packages-split | grep -E 'rtw8|rtl8' | sort
+```
+
+有 `kernel-module-rtw88-8822ce-6.1.99-lubancat` 就说明是名字问题；一个都没有才是配置问题
+（回去看 `CONFIG_RTW88_*`）。
+
+注意区分两套名字，它们故意不一样：
+
+| 场景 | 用哪种写法 | 例子 |
+|---|---|---|
+| 包依赖（`RDEPENDS` / `RRECOMMENDS`） | 短横线 | `kernel-module-rtw88-8822ce` |
+| 模块名（`KERNEL_MODULE_AUTOLOAD`、`modprobe`、`lsmod`） | 下划线 | `rtw88_8822ce` |
+
+另外，模块之间的依赖（`rtw88-8822c` / `rtw88-pci` / `kernel`）由 `kernel-module-split`
+按 `modinfo` 的 `depends` 自动写进 `RDEPENDS`，**只列最上层那个驱动就行**，不用手动补齐底座。
+
+#### 7.7.4 上板验证顺序
+
+```bash
+# 1. 模组有没有被 PCI 枚举出来（没有就是供电/插槽/白名单问题，先别怪驱动）
+lspci -nn | grep -i -E 'network|802\.11'
+
+# 2. 模块加载了吗、固件读到了吗
+lsmod | grep -E 'rtw89|rtw88|rtl8188'
+dmesg | grep -i -E 'rtw89|rtw88|rtl8188|firmware'
+
+# 3. 网络接口出来了吗（名字可能是 wlan0，也可能是 wlP4p65s0 这种，用 wl 前缀兜住）
+ip link | grep -E '^[0-9]+: wl'
+#    没装 lspci 时，用 sysfs 确认卡片与驱动（见 7.7.5）
+
+# 4. 固件到底在不在（路径要和驱动请求的完全一致）
+modinfo -F firmware rtw89_8852be
+ls -l /lib/firmware/rtw89/
+```
+
+典型报错与处置：
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| `Direct firmware load for rtw89/rtw8852b_fw-1.bin failed` | 固件包没装，或文件名对不上（`-1` 后缀不能省） | 装 `linux-firmware-rtw89`，`modinfo -F firmware` 对照 |
+| `ip link` 里没有 `wlan0`，但 lsmod 有驱动 | 固件没加载成功，驱动 probe 后退出 | 看 `dmesg` 里紧跟 `fw failed` 的那几行 |
+| 只有 2.4G 能扫到，5G 空 | 没设监管域 | `iw reg set CN`，或装 `wireless-regdb` 后 `iw reg get` 确认 |
+
+**改了 cfg 或 bbappend 之后**，内核会重编，但 `.ko` 要等 `do_compile_kernelmodules`；
+只想快速验证驱动能不能编，用 12.17 那条 `make -C $S O=$B drivers/net/wireless/realtek/` 就行，
+不用等整个镜像。
+
+#### 7.7.5 节点名不是 `wlan0`、也没有 `lspci`：两件容易误判成"驱动坏了"的事
+
+实测一块插着 RTL8822CE 的板子，第一反应是"没有节点"：
+
+```bash
+# 用户看到的现象
+$ lspci -nn | grep 802.11
+-sh: lspci: not found                      # ① 镜像没装 pciutils
+
+$ ip link | grep wlan
+$ ls /sys/class/net
+dummy0  end1  lo  wlP4p65s0                # ② 节点在，只是不叫 wlan0
+```
+
+而内核日志其实一切正常：
+
+```
+rtw_8822ce 0004:41:00.0: enabling device (0000 -> 0003)
+rtw_8822ce 0004:41:00.0: Firmware version 9.9.15, H2C version 15
+rtw_8822ce 0004:41:00.0 wlP4p65s0: renamed from wlan0      ← 名字是被 udev 改的
+```
+
+**① 没有 `lspci` 时怎么确认卡片枚举出来了**——不装包也能看，`sysfs` 就是数据源：
+
+```bash
+for d in /sys/bus/pci/devices/*; do
+  n=$(basename $d)
+  echo "$n $(cat $d/vendor):$(cat $d/device) class=$(cat $d/class) \
+        driver=$(basename $(readlink $d/driver 2>/dev/null) 2>/dev/null)"
+done
+# 0004:41:00.0 0x10ec:0xc822 class=0x028000 driver=rtw_8822ce
+#                            ^ 0x028000 = 网络控制器   ^ 驱动已绑定
+```
+
+`0x028000` 是 PCI class code 里的 network controller，`driver=` 非空就说明驱动 probe 过了。
+比 `lspci` 少的是设备名，`vendor:device` 用 `grep` 认就行（`10ec:c822` 即 RTL8822CE）。
+
+**② 为什么名字是 `wlP4p65s0`**：systemd-udevd 默认按"可预测网络接口名"改名，无线口变成
+`wl<PCI 路径>`。这不是故障，但调试时很别扭。本层用 `.link` 文件把它钉回 `wlan0`：
+
+```ini
+# /etc/systemd/network/10-lubancat-wlan.link（配方 lubancat-netconfig）
+[Match]
+Type=wlan
+
+[Link]
+Name=wlan0
+```
+
+用 `Type=wlan` 而不是网上常见的 `OriginalName=wlan0`，理由是实测出来的：
+
+```bash
+udevadm control --reload
+udevadm test-builtin net_setup_link /sys/class/net/wlP4p65s0
+```
+
+| `[Match]` 写法 | 结果 |
+|---|---|
+| `OriginalName=wlan0` | 只有 `99-default.link` 生效，`ID_NET_NAME=wlP4p65s0`（**没匹配上**） |
+| `Driver=rtw_*` | 命中，`ID_NET_NAME=wlan0`，但只覆盖主线 rtw88/rtw89 |
+| `Type=wlan` | 命中，`ID_NET_NAME=wlan0`，且与驱动无关（SDIO/USB 模组同样适用） |
+
+`OriginalName` 匹配的是 udev 改名**之前**的内核名，设备一旦被改过名这个键就不成立了；
+`Type` 读的是 uevent 里的 `DEVTYPE=wlan`，与当前名字无关。`udevadm test-builtin` 能直接
+打印最终会用的名字，改这类规则时先这样验，不用反复烧板。
+
+**③ 能扫 SSID、能连网还缺什么**：`packagegroup-lubancat-net` 已补上最小工具集
+`pciutils` / `iw` / `wpa-supplicant` / `wireless-regdb-static`。注意监管域包要装
+`-static` 子包（主包只放 crda 用的旧格式 `regulatory.bin`），否则内核只能用 world 域，
+5GHz 大部分信道不可用——`dmesg` 里那句 `Direct firmware load for regulatory.db failed`
+就是它。
+
+#### 7.7.6 连上 wifi 却上不了网：metric 撞车把默认路由吞掉了
+
+现象：`iw dev` 显示已关联、`ip addr` 有地址、`ping` 网关通，但访问外网一律失败，
+`ip route show default` 里**只有有线那一条**。
+
+**根因不在无线**。有线 `end1` 由 `/usr/lib/systemd/network/80-wired.network` 管理，它写着
+
+```ini
+[DHCP]
+RouteMetric=10
+```
+
+于是内核里有 `default via 192.168.103.254 dev end1 metric 10`。而手工用 busybox
+`udhcpc` 配无线时，`/etc/udhcpc.d/50default` 里的 metric 是**写死的 10**：
+
+```sh
+metric=10
+for i in $router ; do
+    /usr/sbin/ip route add default via $i metric $metric dev $interface
+    metric=$(($metric + 1))
+done
+```
+
+同一 `(dst=default, metric)` 在内核里只能有一个 nexthop，于是这句必然失败：
+
+```
+RTNETLINK answers: File exists
+```
+
+而这个错误被 udhcpc 吞掉了（脚本 stderr 不落到任何日志），最终表现就是
+"wlan0 有 IP、却没默认路由"。有线在时全部流量走有线，看起来是"wifi 不通"；
+拔掉网线则一条默认路由都不剩，整机断网。
+
+**怎么一眼确认**（不用猜）：
+
+```bash
+ip route show default
+# 只有 end1 那条 → 就是这个问题
+
+# 手工复现，两条命令的差别就是全部答案
+ip route add default via <AP网关> dev wlan0 metric 10   # RTNETLINK answers: File exists
+ip route add default via <AP网关> dev wlan0 metric 20   # 成功
+```
+
+顺带一个常被带偏的细节：**网关要看 DHCP 下发的，不是网段里的 .1**。用
+`udhcpc -i wlan0 -n -q -t 3 -s <打印env的脚本>` 打出 `router=` 才知道真实网关
+（实测某 AP 的 DHCP 服务器是 `10.169.169.254`，而 `.1` 是另一台带 Web 管理页的设备，
+往 `.1` 发数据一样出不去，很容易误判成"被强制门户拦了"）。
+
+**本层的修法**：无线不再用 udhcpc，交给 systemd-networkd，和有线同一套机制。
+`lubancat-netconfig` 安装：
+
+```ini
+# /etc/systemd/network/50-lubancat-wlan.network
+[Match]
+Type=wlan
+
+[Network]
+DHCP=yes
+
+[DHCPv4]
+RouteMetric=100        # 比有线的 10 大 → 有线优先，拔线自动切 wifi
+```
+
+外加 `wpa_supplicant@wlan0.service` 的启用和凭据文件
+`/etc/wpa_supplicant/wpa_supplicant-wlan0.conf`（0600，属 CONFFILES，升级不覆盖）。
+填 SSID 的两种方式写在文件注释里，`wpa_passphrase` 那种不会在板上留明文密码。
+
+> **别再用 `udhcpc -i wlan0` 手工配**。两个 DHCP 客户端同时在线会互相抢地址；
+> 而且它加的默认路由注定装不上（见上）。要看状态用 `networkctl status wlan0`。
+
+**另一件容易白查半天的事**：凭据文件只写 `ssid` 不写 `psk`，加密网络会被 wpa_supplicant
+直接判为无效：
+
+```
+wlan0: No enabled networks (1 disabled networks)
+wlan0: State: DISCONNECTED -> INACTIVE
+```
+
+此时 `systemctl status wpa_supplicant@wlan0` 是 **active**、`iw dev wlan0 scan` 也能扫到
+十几个 AP，但 `iw dev wlan0 link` 永远是 Not connected——很像"信号弱/驱动不认这个 AP"。
+加 `-dd` 跑一次才看得见上面那句。判断方法：`wpa_supplicant -dd -i wlan0 -c <conf>` 看
+`State:` 与 `disabled networks`，比反复重启服务快得多。
+
+如果确实想让 wifi 优先于有线，把 `RouteMetric` 改成比 10 小的值（例如 5）；
+想两条链路负载分担则要配 multipath，那是另一件事，别指望改 metric 就自动分流。
+
 ---
 
 ## 8. U-Boot 与 rkbin
@@ -970,11 +1299,38 @@ source /opt/lubancat-sdk/environment-setup-…
 
 格式固定：**症状 → 根因 → 验证 → 修复 → 回归判据**。
 
+### 12.0 速查表（症状 → 根因 → 处置）
+
+下表按出现频率排序，细节、验证命令与回归判据见对应小节或 §12.15。
+
+| # | 症状 | 根因 | 处置 |
+|---|---|---|---|
+| 1 | 串口全黑，但能 ping / ssh | `uEnv.txt` 的 `cmdline=` 覆盖了 dts，且 `console=ttyFIQ0` 没带波特率 | 改成 `console=ttyFIQ0,1500000n8`，重跑 `bitbake extboot-image` |
+| 2 | 卡 `Waiting for root device PARTUUID=...` | rootfs 的 PARTUUID 与内核 dtsi 默认值不一致（抄了厂商 parameter 模板） | 用 `make-updateimg.sh` 自带的 `614e0000-0000-4000-8000-000000000000` |
+| 3 | `No rule to make target 'rockchip/xxx.dtb'` | `KERNEL_DEVICETREE` 少了 `rockchip/` 前缀 | 写全 `rockchip/xxx.dtb` |
+| 4 | `Nothing RPROVIDES 'systemd-networkd'` | scarthgap 的 systemd 255 不拆这个包（networkd 在主包里） | `RDEPENDS` 写 `systemd` |
+| 5 | `Nothing RPROVIDES 'weston-xwayland'` + `missing required distro feature 'pam'` | systemd + weston 强制要求 `pam` | `DISTRO_FEATURES:append = " pam"`（会触发一次全量重签名） |
+| 6 | `WARNING: The free inode ... is running low` + `No new tasks ... STOPTASKS` | `BB_DISKMON_DIRS` 第二列是千个 inode，写成 `1G` 等于要求 10 亿个 | 用 `...,2G,100K`；`HALT,...,500M,10K` |
+| 7 | `No recipes ... for: u-boot-rockchip_%.bbappend` | 该 recipe 文件名无版本号，`_%` 通配不匹配 | bbappend 命名成 `u-boot-rockchip.bbappend` |
+| 8 | `Error, you have '..' in your TMPDIR directory path` | sanity checker 禁止 | `TMPDIR = "${TOPDIR}/tmp"` |
+| 9 | `unparsed line: 'INHERIT += "rm_work"  # ...'` | bitbake 的 conf 不支持行尾注释 | 注释单独成行 |
+| 10 | 内核配置片段写了不生效（如关不掉某个驱动） | `.cfg` 走 `merge_config.sh`，`# CONFIG_X is not set` 会被当注释删掉 | 写 `CONFIG_X=n` |
+| 11 | `Error: file not found: drivers/gpu/arm/bifrost/mali_csffw.bin` | 驱动用 `.incbin` 相对汇编器 cwd，Yocto 是 out-of-tree 构建 | 编译前把 bin 复制到 `${B}` 同名路径（bbappend 已做） |
+| 12 | `rtl8821cu/core/rtw_cmd.c: fatal error: drv_types.h`（后面还跟着 `aes.h` / `mlmeext` 一堆） | vendor 驱动用 `-I$(src)/` 和 `DRV_PATH=$(src)`，`O=${B}` 下 `$(src)` 是相对源码树的路径 | 已由 `0002-wifi-out-of-tree-paths.patch` 修掉；详见 12.17 |
+| 13 | `make: *** No rule to make target 'dtbs'` | bitbake 任务 cwd 是 `${WORKDIR}`，而 `do_compile` 自己会 `cd ${B}` | `oe_runmake -C ${S} O=${B} dtbs` |
+| 14 | 构建成功但 deploy 里没有 `boot-ext2.img` | 只 `inherit deploy` 时 `do_build` 没串 `do_deploy` | 显式 `addtask deploy after do_compile before do_build` |
+| 15 | 重编了 minimal，烧进去却没有新包 | 打包脚本按字母序取了 `lubancat-image-full` | 已改成按 mtime 取最新，并支持 `IMAGE=` / `ROOTFS=` |
+| 16 | 首启没切板，还是 generic dtb | `LUBANCAT_FIRSTBOOT_SWITCH=0` / 内核没使能 saradc / `board_id` 不在 `board-table` | `journalctl -u lubancat-board-detect`；对着日志里的 `adc ch2/ch3` 改表 |
+| 17 | 首启后容量还是镜像大小 | 分区没 grow（用了 `EXTBOOT=0` 或 wic 路径） | `growpart /dev/mmcblk0 3 && resize2fs /dev/mmcblk0p3`，或改用 extboot 布局 |
+| 18 | `shallow mismatch` / `PSI not supported` / 下载只有 30 KB/s | 之前全量拉过同仓 / 容器无 `/proc/pressure` / 没开浅克隆与代理 | 删对应 `build/downloads/git2/<repo>`；注释 `BB_PRESSURE_MAX_*`；`source scripts/setup-mirror.sh` |
+| 19 | `afptool: cannot execute binary file` / `Permission denied` | `tools/rkpack` 是 x86-64 ELF（ARM 主机/macOS 不能跑）；或 exec 位丢了 | 换 x86-64 Linux，或用 `PACK=` 指自备 SDK；`chmod +x tools/rkpack/*` |
+| 20 | `pip install kas` 报 `No matching distribution found for kas` | 国内 pip 镜像没同步 kas（实测清华源如此） | `pip install -i https://pypi.org/simple kas`；或 `pip download` 后离线安装 |
+| 21 | `Direct firmware load for rtw89/… failed` / 有驱动没 `wlan0` | 固件包没装；`rtw89` 的固件没被 poky 切成子包 | 装 `linux-firmware-rtw89`（本层 bbappend 提供），详见 7.7 |
+| 22 | wifi 已关联、有 IP、网关能 ping，但上不了外网 | udhcpc 脚本把默认路由 metric 写死 10，与有线 `RouteMetric=10` 撞车，`ip route add` 返回 `File exists` 后被丢弃 | 无线改由 systemd-networkd 管（`lubancat-netconfig`，`RouteMetric=100`），别再手工跑 `udhcpc -i wlan0`；详见 7.7.6 |
+
 ### 12.1 串口无 `login:`，但内核日志正常
 
 - **根因**：getty 起在 `ttyS2` 上，而控制台是 `ttyFIQ0`。buildroot 的默认 `BR2_TARGET_GENERIC_GETTY_PORT="ttyS2"` 是同款问题的老证据。
-|  |  |
-| --- | --- |
 - **验证**：`systemctl status serial-getty@ttyFIQ0` 应为 active；`ps | grep getty` 看实际端口。
 - **修复**：`SERIAL_CONSOLES = "1500000;ttyFIQ0"`（本层已写死）+ `SERIAL_CONSOLES_CHECK`。
 - **回归**：重启后 10 秒内出现 `login:`。
@@ -1123,32 +1479,65 @@ addtask lubancat_mali_fw after do_configure before do_compile
 
 **同类问题排查**：`grep -rn '\.incbin' $S --include=*.c`。另外两处 `kernel/configs.c`、`kernel/kheaders.c` 的 `.incbin` 路径由 kbuild 在 `${B}` 里生成，不受影响。
 
-### 12.17 内核模块编译期：vendor wifi 驱动 `drv_types.h` 找不到
+### 12.17 内核模块编译期：vendor wifi 驱动找不到头文件（已修复）
 
-**症状**（`do_compile` 通过，卡在 `do_compile_kernelmodules`）：
+**症状**（`do_compile` 通过，卡在 `do_compile_kernelmodules`），而且会一站一站往下走：
 
 ```
-drivers/net/wireless/rockchip_wlan/rtl8821cu/core/rtw_cmd.c:17:10: fatal error: drv_types.h: No such file or directory
-make[6]: *** [scripts/Makefile.build:250: .../rtl8821cu/core/rtw_cmd.o] Error 1
+第一站：drivers/net/wireless/rockchip_wlan/rtl8821cu/core/rtw_cmd.c:17:10:
+        fatal error: drv_types.h: No such file or directory
+第二站：rtl8852be/core/rtw_swcrypto.c:16:10: fatal error: aes.h: No such file or directory
+第三站：ioctl_cfg80211.c:4948:32: error: 'struct _ADAPTER_LINK' has no member named 'mlmeext'
+        ioctl_cfg80211.h:432:60: error: implicit declaration of function 'cfg80211_send_rx_assoc'
 ```
 
-**根因**：这四个 Realtek vendor 驱动的 Makefile 里写的是 `EXTRA_CFLAGS += -I$(src)/include`，
-而源文件在 `core/` 子目录里编译——进入子目录后 kbuild 把 `$(src)` 重设成 `.../rtl8821cu/core`，
-`-I` 于是指向并不存在的 `core/include`。Rockchip SDK 里能过，是因为它走的是另一套编译拓扑。
+**根因只有一个：`O=${B}` 的 out-of-tree 构建。** 这批 vendor 驱动只在 Rockchip SDK 那种
+`S == B` 的拓扑下验证过，Yocto 把源码树（`S`）和构建树（`B`）分开之后，`$(src)` 变成
+"相对源码树的路径"，而编译器的 cwd 是构建树，于是踩两个坑：
 
-**修法**（L0/L1 只需要有线，先把这四个关掉）：
+| 坑 | 具体写法 | 后果 |
+|---|---|---|
+| 1 | `EXTRA_CFLAGS += -I$(src)/include` 等 | `-I` 指向不存在的目录 → 第一站、第二站 |
+| 2 | `DRV_PATH = $(src)` + `include $(wildcard $(DRV_PATH)/platform/*.mk)` | 通配为空，`platform/arm_rk.mk` 根本没读进来 → 第三站 |
 
-```conf
-# 必须写 =n。写 "# CONFIG_X is not set" 会被 merge_config.sh 当注释整行删掉，等于没写。
-CONFIG_RTL8189FS=n
-CONFIG_RTL8821CU=n
-CONFIG_RTL8851BE=n
-CONFIG_RTL8852BE=n
+第 2 个坑最阴：`platform/arm_rk.mk` 负责补 `-DCONFIG_IOCTL_CFG80211 -DRTW_USE_CFG80211_STA_EVENT`，
+少了这两个宏，代码就退回到 6.1 已经删掉的 `cfg80211_send_rx_assoc()` / `cfg80211_send_disassoc()`，
+还按老结构体访问 `_ADAPTER_LINK.mlmeext`——所以报出来的错误跟 include 路径毫无关系，
+很容易误判成"驱动不兼容内核 6.1"。
+
+**为什么有的 `$(src)` 又能用？** kbuild 的顶层 Makefile 里有
+`MAKEFLAGS += --include-dir=$(abs_srctree)`，所以 `include $(src)/common.mk` 这种
+相对路径的 include 指令是被搜索路径兜住的，只有 `-I` 参数和 `$(wildcard ...)` 不会被兜住。
+排错时按这个区分，别一股脑全改。
+
+**修法**：`0002-wifi-out-of-tree-paths.patch`。在每个 Makefile 开头把 `src` 解析成绝对路径，
+`-I` 和 `DRV_PATH` 都改用它：
+
+```make
+LUBANCAT_WIFI_SRC := $(if $(filter /%,$(src)),$(src),$(srctree)/$(src))
+EXTRA_CFLAGS += -I$(LUBANCAT_WIFI_SRC)/include
 ```
 
-保留 `CONFIG_WL_ROCKCHIP=y`，这样 `CFG80211/MAC80211` 不会被连带关掉，将来要开 wifi
-只需改这几个驱动的 Makefile（`-I$(srctree)/$(obj)/../include`）或走 `WIFI_BUILD_MODULE`
-的 external module 流程。
+`$(if $(filter /%,...))` 这个判断是为了 `make M=...` 的外部模块构建——那种场景 `src`
+本来就是绝对路径，不能再拼一次 `$(srctree)`。覆盖 5 个驱动（rtl8189fs / rtl8821cu /
+rtl8851be / rtl8852be / aic8800_usb）共 11 个文件。
+
+**验证**（只编驱动目录，几分钟，不用整核重编）：
+
+```bash
+S=build/tmp/work-shared/lubancat-4-v1/kernel-source
+B=build/tmp/work/lubancat_4_v1-poky-linux/linux-rockchip/6.1/linux-lubancat_4_v1-standard-build
+cd $S && ./scripts/config --file $B/.config -m RTL8852BE -m RTL8851BE -m RTL8821CU -m RTL8189FS
+make -C $S O=$B olddefconfig
+make -C $S O=$B -j$(nproc) drivers/net/wireless/rockchip_wlan/
+```
+
+通过标准是四个目录分别产出 395 / 408 / 184 / 132 个 `.o`（数字随驱动版本浮动，非 0 即可）。
+注意 `make drivers/.../` 只做到 `LD [M] 8852be.o`，`.ko` 要等 `make modules`，别拿 `.ko`
+是否存在判断成败。
+
+**只想要有线、不想编这些模块**：在 `lubancat-family.cfg` 里把四个改回 `=n` 即可，
+`CONFIG_WL_ROCKCHIP=y` 保留（它牵着 `CFG80211/MAC80211`）。本层默认是 `=m`。
 
 **这里有个通用坑，值得单列**：`.cfg` 配置片段走的是 `scripts/kconfig/merge_config.sh`，
 它会先 `sed -e '/^#/d'` 把注释行全删掉，再 `s/^CONFIG_X=n$/# CONFIG_X is not set/`。
