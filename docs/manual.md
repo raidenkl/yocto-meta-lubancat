@@ -45,7 +45,7 @@
 | **U-Boot**        | `https://github.com/LubanCat/u-boot.git`                                        | **`main`**        | `a564b1d927aa6032520819536a5b8c450e8141c4`（2026-11-02）                                   | `git ls-remote … refs/heads/main`            |
 | **rkbin**         | `https://github.com/LubanCat/rkbin.git`                                         | **`master`**      | `74213af1e952c4683d2e35952507133b61394862`（2026-11-02）                                   | `git ls-remote … refs/heads/master`          |
 | **内核**            | `https://github.com/LubanCat/kernel.git`                                        | `lbc-develop-6.1` | `a0c672347152a0ea0713a043f1d1c4ec4323ff93`（2026-11-02）；板上实测为 `6.1.99-6-53-g8c242be8391f` | `git ls-remote … refs/heads/lbc-develop-6.1` |
-| DDR bin           | 由 rkbin 的 `RKBOOT/RK3588MINIALL.ini` 决定                                         | —                 | `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin`                                           | 读 ini                                        |
+| DDR bin           | 由 rkbin 的 `RKBOOT/RK3588MINIALL.ini` 决定，本层改写成 1848 档                              | —                 | `rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin`                                           | 读 ini（见 §8.7）                                |
 | 主机                | Ubuntu 22.04 / 24.04 或 Debian 12                                                | —                 | —                                                                                        | `lsb_release -a`                             |
 
 > **为什么要钉 SHA**：上游 `meta-rockchip` 的 `u-boot-rockchip.bb` 与 `linux-rockchip_6.1.bb` 内部已经钉了 `SRCREV`，但你自己这三个仓库用的是 `branch=`，不钉的话每次 `bitbake` 可能拿到不同代码，「昨天能编今天不能编」的第一嫌疑永远是这里。
@@ -65,7 +65,7 @@
 | 项    | 事实                                                                  | 对 Yocto 配置的直接影响                                                                   |
 | ---- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | SoC  | **RK3588S**（不是 RK3588）                                              | `gmac1` 的地址是 `ethernet@fe1c0000`（全功能 RK3588 里 fe1c0000 是 gmac0）；DTS 用 `rk3588s-*` |
-| 内存   | 8GB LPDDR4X @2112MHz，4 通道 × 2GB                                     | DDR bin 必须匹配 LPDDR4X/2112 档位                                                      |
+| 内存   | 8GB LPDDR4X @1848MHz，4 通道 × 2GB                                     | DDR bin 锁 LPDDR4X/1848 档（`rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin`）             |
 | 存储   | eMMC（`sdhci`，HS400）+ TF（`sdmmc`，SDR104）                             | 两套 mmc 设备序号不固定 → 一律用 `PARTUUID` 挂根                                                |
 | 以太网  | GMAC1 + **RTL8211F**，`rgmii-rxid`，reset `gpio3 PB2`，`tx_delay=0x1b` | `CONFIG_REALTEK_PHY`、`CONFIG_DWMAC_ROCKCHIP`                                      |
 | 调试串口 | **UART2，1500000 8N1**，内核里是 `ttyFIQ0`（fiq-debugger 接管）               | `SERIAL_CONSOLES="1500000;ttyFIQ0"`，且不能写 `ttyS2`                                  |
@@ -499,10 +499,14 @@ SERIAL_CONSOLES_CHECK = "${SERIAL_CONSOLES}"
 
 ```conf
 LUBANCAT_RKBIN_INI ?= "RK3588MINIALL.ini"
-LUBANCAT_DDR_BIN ?= "rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin"
+LUBANCAT_DDR_BIN ?= "rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin"
 ```
 
-这两个变量只服务于 `u-boot-rockchip_%.bbappend` 里的**编译期断言**。真正决定 DDR bin 的是 `LubanCat/rkbin` 的 ini 文件；断言的作用是把「配错 DDR」从「板上假死、串口无输出」变成「编译期一行报错」。
+`LubanCat/rkbin` 的 ini 默认指向该 SoC 的最高档（RK3588 是 lp4 2112MHz / lp5 2400MHz），
+而 LubanCat 全系 RK3588 板卡的 LPDDR4X 定型频点是 **1848MHz**。所以 `u-boot-rockchip_%.bbappend`
+在 `do_compile:prepend` 里做了两件事：把 ini 的 `Path1` 与 `FlashData`（后者才是真正打包进
+loader 的那份）一起改写成 `LUBANCAT_DDR_BIN`，再断言这个 bin 文件在 rkbin 里确实存在。
+把「配错 DDR」从「板上假死、串口无输出」变成「编译期一行报错」，就是这两个变量的全部意义。
 
 ### 6.4 `lubancat-4-v1.conf`
 
@@ -532,7 +536,7 @@ UBOOT_MACHINE = "rk3588_defconfig"
 
 | 系列 | include | `UBOOT_MACHINE` | dts | 关键差异 |
 |---|---|---|---|---|
-| LubanCat-4 / 4-V1（RK3588S） | `lubancat-rk3588.inc` | `rk3588_defconfig` | `rk3588s-lubancat-4-v1.dtb` | gmac1 在 `fe1c0000`；DDR v1.19 |
+| LubanCat-4 / 4-V1（RK3588S） | `lubancat-rk3588.inc` | `rk3588_defconfig` | `rk3588s-lubancat-4-v1.dtb` | gmac1 在 `fe1c0000`；DDR v1.19 / 1848 档 |
 | LubanCat-5 等 RK3588 全功能板 | 同上 | 同上 | 换 `rk3588-lubancat-*.dts` | 有两路 GMAC，节点编号与 3588S 不同 |
 | LubanCat-2（RK3568） | `lubancat-rk356x.inc` | `rk3568_defconfig` | `rk3568-lubancat-2-*.dts` | DDR bin 换 `rk3568_ddr_1560MHz_*`；Mali 是 bifrost，不是 valhall |
 | LubanCat-Zero（RK3566） | 同上（改 `require rk3566.inc`） | `rk3566_defconfig` | `rk3566-lubancat-zero.dts` | 同上 |
@@ -1090,7 +1094,7 @@ addtask lubancat_uboot_defconfig after do_patch before do_configure
 
 ### 8.7 rkbin 与 DDR bin
 
-`LubanCat/rkbin` master 的 `RKBOOT/RK3588MINIALL.ini` 实测：
+`LubanCat/rkbin` master 的 `RKBOOT/RK3588MINIALL.ini` 原始内容（**未**被本层改写时）：
 
 ```ini
 [CODE471_OPTION] Path1=bin/rk35/rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin
@@ -1099,15 +1103,44 @@ addtask lubancat_uboot_defconfig after do_patch before do_configure
 [OUTPUT]         PATH=rk3588_spl_loader_v1.19.113.bin   NEWIDB=true
 ```
 
-而工作区历史串口日志里是 `DDR Version V1.08 20220617`、`LPDDR4X, 2112MHz`。**两个版本都能跑 2112MHz**，不要因为「日志里是 v1.08，仓库里是 v1.19」就断定有问题；但也别假设新版一定更好——DDR 训练失败的板子表现为**串口一个字都不打印**。
+DDR bin 在 ini 里出现**两次**：`[CODE471_OPTION]` 的 `Path1`（boot_merger 的选项描述）和
+`[LOADER_OPTION]` 的 `FlashData`（真正打进 loader 的那份）。只改前者会得到「ini 看着对、
+loader 里还是旧 bin」的结果，而且不报错——这是本节最值得记住的一条。
+
+本层按机器要求的档位改写这两处。各芯片的 DDR 频点基线：
+
+| SoC | DDR 频点 | rkbin 里的 bin |
+|---|---|---|
+| RK3588 / 3588S | 1848MHz | `rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin` |
+| RK3576 | 1560MHz | `rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.09.bin`（rkbin 没有 1560 档的 bin） |
+| RK3568 | 1560MHz | `rk3568_ddr_1560MHz_v1.23.bin` |
+| RK3566 | 1056MHz | `rk3566_ddr_1056MHz_v1.23.bin` |
+
+注意 bin 文件名里的频率是 **bin 内含的最高档位**（LPDDR4x / LPDDR5 两套），不等于内核运行时
+实际跑的频点；运行时频点由 kernel 的 dmc devfreq 协商，`/sys/class/devfreq/dmc/available_frequencies`
+能看到本板支持的全部档位。
+
+改档后串口应打印 `DDR Version V1.19` + `LPDDR4X, 1848MHz`。历史上工作区日志是 `V1.08` +
+`2112MHz`，那是旧档位配置的产物，不要拿它当基线。
 
 排查手段：
 
 ```bash
-strings build/tmp/deploy/images/lubancat-4-v1/idblock.img | grep -i 'ddr\|v1\.'
+# 1848 档 bin 的 typ 时间戳是 25/04/21，2112 档是 25/03/13（两份 v1.19 的 fw hash 前缀相同，
+# 只能靠时间戳区分）
+strings build/tmp/deploy/images/lubancat-4-v1/idblock.img | grep -iE 'ddr|^typ|20[0-9]{6}'
 ```
 
-回退路径：把 `RK3588MINIALL.ini` 的 `Path1`/`FlashData` 指回 v1.08（rkbin 里通常仍保留），或把 `SRCREV_rkbin` 退到 SDK 同源的提交。
+idblock.img 里没有文件名，只能看到 DDR 初始化的版本串与 typ 时间戳；要确认实际运行频点
+最终还得看串口打印的 `LPDDR4X, 1848MHz`。
+
+> 验证状态：1848 档只做到「编译期改写生效 + idblock 内 DDR 固件时间戳与 1848 档 bin 一致」
+> （`do_compile` 强制重跑后比对 `strings idblock.img`），**未在 RK3588 板上实测串口输出**。
+> 上板前请确认串口打印的频点，以及整机稳定性（DDR 训练失败的表现是一行都不打印）。
+
+回退路径：把 `LUBANCAT_DDR_BIN` 改回 `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin`（ini 会被
+自动改回），重编 u-boot；或把 `SRCREV_rkbin` 退到 SDK 同源的提交。DDR 训练失败的表现是
+**串口一个字都不打印**，不是内核 panic。
 
 ---
 
@@ -2123,7 +2156,7 @@ ls /run/lubancat-boot 2>/dev/null              # 已卸载，标记在 boot 分�
 | `SRCREV`（u-boot） | `a564b1d9…` | u-boot bbappend | `LubanCat/u-boot:main` |
 | `SRCREV_rkbin` | `74213af1…` | u-boot bbappend | `LubanCat/rkbin:master` |
 | `SRCREV`（kernel） | `a0c67234…` | kernel bbappend | `lbc-develop-6.1` 当日 HEAD |
-| `LUBANCAT_DDR_BIN` | `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin` | 本层 inc | 断言用 |
+| `LUBANCAT_DDR_BIN` | `rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin` | 本层 inc | 改写 ini + 断言 |
 | `INIT_MANAGER` | `systemd` | local.conf | |
 | `PACKAGE_CLASSES` | `package_ipk` | local.conf | |
 

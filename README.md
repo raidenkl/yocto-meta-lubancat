@@ -53,13 +53,15 @@ commit 钉死。`scripts/` 放主机依赖、拉层、打包和烧写脚本，`t
 |---|---|---|---|---|
 | `lubancat-4-v1` | RK3588S | LubanCat-4 V1（板级别名，不切板） | `rk3588s-lubancat-4-v1.dtb` | 上板验证：串口、有线网、HDMI、GPU、NPU |
 | `lubancat-rk3588` | RK3588 / 3588S | LubanCat-4 / 4IO / 5 / 5-V2 / 5IO / 5IOB / 5IOF / 5IOI / 5IO-AIBOX1 | `rk3588-lubancat-generic.dtb` | 编译级，12 dtb / 278 dtbo |
-| `lubancat-rk3576` | RK3576 | LubanCat-3 / 3-V2 / 3IO / 3IO-test | `rk3576-lubancat-generic.dtb` | 编译级，6 / 78 |
-| `lubancat-rk3568` | RK3568 | LubanCat-2 / 2-V1/V2/V3 / 2H / 2IO / 2N / 2N-V2/V3 | `rk356x-lubancat-generic.dtb` | 编译级，10 / 33 |
-| `lubancat-rk3566` | RK3566 | LubanCat-1 / 1H / 1IO / 1N / 0 / CM4 | `rk356x-lubancat-generic.dtb` | 编译级，6 / 33 |
+| `lubancat-rk3576` | RK3576 | LubanCat-3 / 3-V2 / 3IO / 3IO-test | `rk3576-lubancat-generic.dtb` | 上板验证：GPU、NPU、网络；6 dtb / 78 dtbo |
+| `lubancat-rk3568` | RK3568 | LubanCat-2 / 2-V1/V2/V3 / 2H / 2IO / 2N / 2N-V2/V3 | `rk356x-lubancat-generic.dtb` | 上板验证：GPU、NPU、网络；10 / 33 |
+| `lubancat-rk3566` | RK3566 | LubanCat-1 / 1H / 1IO / 1N / 0 / CM4 | `rk356x-lubancat-generic.dtb` | 上板验证：GPU、NPU、网络；6 / 33 |
 | `lubancat-rk3562` | RK3562 | LubanCat-1HS / 1HS-test | `rk3562-lubancat-generic.dtb` | 编译级，3 / 42 |
 | `lubancat-rk3528` | RK3528 | LubanCat-Q1 / Q1IO | `rk3528-lubancat-generic.dtb` | 编译级，3 / 15 |
 
 "编译级"指 `bitbake -p` 通过、变量核对正确、dtb 与 dtbo 数量符合预期，没有上过板。
+RK3588 族从 v0.1.3 起 DDR 锁 1848MHz 档，该档只做到编译期验证，上板请留意串口打印的
+`LPDDR4X, 1848MHz`（见 `docs/manual.md` §8.7）。
 层 commit 与 BSP SRCREV 见 [`docs/VERSION-MATRIX.md`](docs/VERSION-MATRIX.md)。
 
 边界：

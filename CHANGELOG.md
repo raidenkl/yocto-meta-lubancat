@@ -10,6 +10,39 @@
 
 ---
 
+## v0.1.3
+
+### 修复
+
+- **RK3588/3588S 的 DDR bin 锁到 1848 档**。`LubanCat/rkbin` 的 `RK3588MINIALL.ini`
+  默认指向最高档（`lp4 2112MHz / lp5 2400MHz`），而 LubanCat 全系 RK3588 板卡的 LPDDR4X
+  定型频点是 1848MHz。`lubancat-rk3588.inc` 的 `LUBANCAT_DDR_BIN` 改为
+  `rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin`
+- `u-boot-rockchip.bbappend` 增加 ini 改写：`do_compile:prepend` 里把 `RK*MINIALL.ini`
+  的 `Path1` 与 `FlashData`（后者才是真正打包进 loader 的那份）一起改写成
+  `LUBANCAT_DDR_BIN`，再断言该 bin 在 rkbin 里存在。此前这里只做断言，改档位会直接
+  `bbfatal`（`Path1` 与 `FlashData` 只改一处则会出现「ini 看着对、loader 里还是旧 bin」）
+- `do_compile[vardeps] += "LUBANCAT_DDR_BIN LUBANCAT_RKBIN_INI"`：两个变量只在 shell 里
+  内联引用，bitbake 收集不到依赖，不加会出现「改了档位但 sstate 命中、uboot.img 没变」
+
+### 文档
+
+- `docs/VERSION-MATRIX.md` 第 4 节增加「DDR 频点 / DDR bin」两列，补齐六族档位；
+  验证级别按本轮上板结果更新（RK3576 / RK3568 / RK3566 由「编译解析级」改为「真机上板」）
+- `docs/manual.md` §1.1 / §6.3 / §6.5 / §8.7 / 附录 A 同步为 1848 档，§8.7 说明
+  `Path1` 与 `FlashData` 必须一起改的原因，并注明 1848 档的验证边界（只到编译期 +
+  idblock 时间戳比对，未在 RK3588 板上实测串口频点）
+
+### 验证
+
+- RK3576 / RK3568 / RK3566 三族 full 镜像均上板通过：GPU（kmscube / weston-egl）、
+  NPU（`/sys/kernel/debug/rknpu/`）、网络正常
+- RK3588 的 1848 档：`bitbake -c compile -f -v u-boot-rockchip` 日志可见 ini 两处改写，
+  `strings idblock.img` 的 DDR 固件时间戳为 `25/04/21-14:31`，与 1848 档 bin 一致
+  （2112 档那份是 `25/03/13-15:39`）
+
+---
+
 ## v0.1.2
 
 ### 新增 meta-realtime 层（PREEMPT_RT）
