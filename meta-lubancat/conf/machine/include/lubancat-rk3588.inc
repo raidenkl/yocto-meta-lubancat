@@ -40,9 +40,13 @@ IMAGE_FSTYPES ?= "wic.gz ext4 tar"
 
 # ---- rkbin 约束（真正生效靠 u-boot recipe 的 SRCREV_rkbin，这里是断言依据）----
 LUBANCAT_RKBIN_INI ?= "RK3588MINIALL.ini"
-# LubanCat/rkbin master 的 RK3588MINIALL.ini 当前指向 v1.19（lp4 2112MHz / lp5 2400MHz）。
-# 若换了 rkbin 版本，这个变量要同步改，否则 u-boot recipe 的编译期断言会直接报错。
-LUBANCAT_DDR_BIN ?= "rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.19.bin"
+# LubanCat/rkbin master 的 RK3588MINIALL.ini 默认指向 v1.19 的最高档
+# （lp4 2112MHz / lp5 2400MHz）。LubanCat 全系 RK3588/3588S 板卡的 LPDDR4X
+# 定型频点是 **1848MHz**，所以这里锁到 1848 档（lp4 1848 / lp5 2112）：
+# u-boot recipe 在 do_compile:prepend 里把 ini 的 Path1 与 FlashData 两处
+# 一起改写，改写后再断言 bin 文件确实存在。
+# 若换了 rkbin 版本，这个变量要同步改，否则编译期断言会直接报错。
+LUBANCAT_DDR_BIN ?= "rk3588_ddr_lp4_1848MHz_lp5_2112MHz_v1.19.bin"
 
 MACHINE_EXTRA_RRECOMMENDS += "kernel-modules"
 

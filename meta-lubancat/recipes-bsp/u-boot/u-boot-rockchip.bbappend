@@ -84,19 +84,45 @@ do_lubancat_uboot_defconfig() {
 }
 addtask lubancat_uboot_defconfig after do_patch before do_configure
 
-# 编译期断言：DDR bin 与板卡内存参数必须对得上。
-# 配错档位表现的是一句话都不打印的「假死」，极难定位。
+# DDR bin 档位：rkbin 的 ini 默认指向该 SoC 的最高档，但 machine conf 可能要求更低的
+# 档位（如 RK3588 全系锁 1848MHz）。这里在编译前就地改写 ini，再做断言。
+#
+# ini 里 DDR bin 出现在**两处**，且必须一起改：
+#   [CODE471_OPTION] Path1=bin/rk35/xxx_ddr_yyy.bin     ← boot_merger 的选项描述
+#   [LOADER_OPTION]  FlashData=bin/rk35/xxx_ddr_yyy.bin ← 真正打包进 loader 的那份
+# 只改 Path1 会得到「ini 看着对、loader 里还是旧 bin」的结果，而且不会报错。
+#
+# 改写用 bin/rk35/ 前缀定位（rkbin 所有 SoC 的预编译 bin 都放在这个目录）；
+# 若某天 rkbin 改了目录结构，改写不会命中，后面的断言会直接 bbfatal，不会静默放过。
+#
+# do_compile[vardeps]：LUBANCAT_DDR_BIN 只被 shell 内联引用，bitbake 收集不到依赖，
+# 不加这行会出现「改了档位但 sstate 命中、uboot.img 没变」。
+do_compile[vardeps] += "LUBANCAT_DDR_BIN LUBANCAT_RKBIN_INI"
+
 do_compile:prepend() {
     ini="${WORKDIR}/rkbin/RKBOOT/${LUBANCAT_RKBIN_INI}"
 
-    if [ -f "$ini" ]; then
-        if ! grep -q "${LUBANCAT_DDR_BIN}" "$ini"; then
-            bbfatal "DDR bin mismatch: ${ini} 里没有 ${LUBANCAT_DDR_BIN}。请确认 rkbin 分支/提交，或同步修改 LUBANCAT_DDR_BIN。"
-        fi
-        bbnote "rkbin DDR bin: $(grep -A2 '^\[CODE471_OPTION\]' "$ini" | grep -m1 Path1)"
-    else
-        bbwarn "${ini} 不存在，跳过 DDR bin 断言"
+    if [ ! -f "$ini" ]; then
+        bbwarn "${ini} 不存在，跳过 DDR bin 改写与断言"
+        return 0
     fi
+
+    if ! grep -q "${LUBANCAT_DDR_BIN}" "$ini"; then
+        sed -i -E "s#bin/rk35/[A-Za-z0-9_.]*ddr[A-Za-z0-9_.]*\.bin#bin/rk35/${LUBANCAT_DDR_BIN}#g" "$ini"
+        bbnote "DDR bin: ${LUBANCAT_RKBIN_INI} 已改写为 ${LUBANCAT_DDR_BIN}（Path1 + FlashData）"
+    fi
+
+    grep -q "${LUBANCAT_DDR_BIN}" "$ini" || \
+        bbfatal "DDR bin mismatch: ${ini} 里没有 ${LUBANCAT_DDR_BIN}。请确认 rkbin 分支/提交，或同步修改 LUBANCAT_DDR_BIN。"
+
+    # 断言 bin 文件真实存在：改对了名字但文件不存在，boot_merger 才会在后面报错，
+    # 那时报的是「打包失败」，不如这里直接指出缺哪个文件。
+    ddrpath=$(grep -m1 -oE "bin/[A-Za-z0-9_]+/${LUBANCAT_DDR_BIN}" "$ini")
+    [ -n "$ddrpath" ] || bbfatal "在 ${ini} 里找不到 ${LUBANCAT_DDR_BIN} 的路径"
+    [ -f "${WORKDIR}/rkbin/${ddrpath}" ] || \
+        bbfatal "rkbin 里没有 ${ddrpath}，可用档位见 rkbin/bin/rk35/ 下同名 SoC 的 ddr bin"
+
+    bbnote "rkbin DDR bin: ${ddrpath}"
 }
 
 # 编译后断言：dtfile 是 Rockchip 私有命令，挂 CONFIG_CMD_FDT 之下、没有独立 Kconfig
