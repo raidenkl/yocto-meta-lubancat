@@ -32,6 +32,19 @@
 - `docs/manual.md` §1.1 / §6.3 / §6.5 / §8.7 / 附录 A 同步为 1848 档，§8.7 说明
   `Path1` 与 `FlashData` 必须一起改的原因，并注明 1848 档的验证边界（只到编译期 +
   idblock 时间戳比对，未在 RK3588 板上实测串口频点）
+- `docs/manual.md` 按仓库当前状态整体重写（保持 0~14 章 + 附录 A/B/C 骨架）：
+  - 验收口径由 L0 / L1 / L2 改为按镜像分级（minimal / net / full），并补各族上板状态表
+  - §6.1 文件树按实际目录重写，补 `meta-realtime/`、`extboot-image.bb`、
+    `lubancat-firstboot/`、`netconfig/`、`tools/rkpack/`；§6.5 改为七行 MACHINE 表
+  - 新增 §7.8「PREEMPT_RT 内核（`meta-realtime`）」；§7.6 三条路线改标 A/B/C 并
+    补设备树 overlay 的 config 前提
+  - §9 补 `packagegroup-lubancat-base` 内容表；§10 重组为「分区、打包与烧录」，
+    §10.5 补 `update.img` 脚本的四件事
+  - §12.0 速查表补 `weston.service` 启动失败、`uname -r` 无 `-rt36` 两条；
+    §12.20 标注为历史实测，不作为镜像功能承诺
+  - 删除已不存在的 `lubancat-rk356x.inc`、`recipes-kernel/dto`、旧 SDK 打包目录流程
+- `README.md` §5.2 去掉「手册把这三份称作 L0 / L1 / L2」的表述，改为与 §1.2 的
+  镜像分级验收一一对应
 
 ### 验证
 

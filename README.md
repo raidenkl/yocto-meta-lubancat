@@ -259,7 +259,7 @@ KAS_TARGET="lubancat-image-net extboot-image" kas build kas/lubancat.yml
   `kas/lubancat.yml` 与 `local.conf.sample` 都已带上。
 - 默认配置的 `EXTRA_IMAGE_FEATURES` 含 `debug-tweaks`，编出来的任何镜像 root 都是空密码。上板调试方便，
   对外发布前要改的是 `local.conf` 里的 `EXTRA_IMAGE_FEATURES`——改镜像 recipe 没有用。
-- 手册 `docs/manual.md` 把这三份称作 L0 / L1 / L2，本文件直接用 recipe 名。
+- 手册 `docs/manual.md` 第 1.2 节按「能启动 / 网络 / 图形」三段组织验收，与这三份 recipe 一一对应。
 
 ### 5.3 换 RT 内核
 
